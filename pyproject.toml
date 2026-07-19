@@ -1,7 +1,42 @@
 [project]
 name = "voicecommander"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hotkey-driven local or cloud speech transcription for Windows"
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "keyboard>=0.13.5",
+    "keyring>=25.6",
+    "pyperclip>=1.9",
+    "sounddevice>=0.5",
+]
+
+[project.optional-dependencies]
+nvidia = [
+    "librosa>=0.11",
+    "torch>=2.13",
+    "transformers>=5.13.1",
+]
+
+[project.scripts]
+voicecommander = "voicecommander.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+build = [
+    "pyinstaller>=6.21",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voicecommander"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
