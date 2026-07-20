@@ -13,7 +13,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .settings import APP_DIR, Settings
+from .settings import APP_DIR, POSTPROCESS_STYLES, Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
@@ -28,13 +28,6 @@ WHISPER_RUNTIME_URL = (
     "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip"
 )
 WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
-POSTPROCESS_STYLES = {
-    "faithful": "Keep the speaker's wording and sentence order wherever possible.",
-    "clean": "Remove false starts and repetition, and improve readability.",
-    "professional": "Use clear, polished professional prose.",
-    "concise": "Tighten the wording and remove unnecessary repetition.",
-}
-
 logger = logging.getLogger(__name__)
 LoadedModel = tuple[str, Any, Any]
 
@@ -209,13 +202,29 @@ def transcribe(path: Path, settings: Settings, loaded_model: LoadedModel | None,
     return transcribe_openrouter(path, settings, api_key)
 
 
+def _strength_instruction(strength: int) -> str:
+    # Models follow these categories far more reliably than a numeric dial.
+    if strength <= 25:
+        return "Only fix punctuation and obvious mis-hearings; keep the wording exactly as spoken."
+    if strength <= 75:
+        return "Lightly clean up the text, keeping the speaker's wording and sentence order."
+    return "Rewrite freely for clarity while preserving the meaning."
+
+
 def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
-    prompt = f"""Edit this dictated text without changing its meaning or adding information.
-Editing strength: {settings.postprocess_strength}/100, where 0 means preserve the
-source verbatim and 100 permits substantial rewriting for clarity.
-Style: {POSTPROCESS_STYLES[settings.postprocess_style]}
-Apply spoken formatting cues as paragraphs, bullets, or numbered lists.
-Return only the finished text."""
+    rules = [
+        "Edit this dictated text without changing its meaning or adding information.",
+        _strength_instruction(settings.postprocess_strength),
+        f"Style: {POSTPROCESS_STYLES[settings.postprocess_style]}",
+        "Reply in the language of the dictated text.",
+        'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
+        " or restarts a phrase, keep only the corrected version and never write the command itself.",
+        'Convert spoken commands ("new paragraph", "bullet point", "quote ... unquote") and'
+        " formatting cues into paragraphs, bullets, numbered lists, and punctuation.",
+        f"Write numbers, dates, and times naturally for the {settings.language} locale.",
+        "Return only the finished text.",
+    ]
+    prompt = "\n".join(rules)
     payload = {
         "model": settings.postprocess_model,
         "messages": [
@@ -242,7 +251,7 @@ def run_pipeline(
     api_key: str,
 ) -> str:
     raw = transcribe(path, settings, loaded_model, api_key)
-    if settings.postprocess_provider == "none" or settings.postprocess_strength == 0:
+    if settings.postprocess_strength == 0:
         return raw
     try:
         return postprocess_openrouter(raw, settings, api_key)

@@ -87,8 +87,20 @@ class EssentialTests(unittest.TestCase):
             path.write_text('asr_provider = "local"\n', encoding="utf-8")
             self.assertEqual(load_settings(path).local_asr_model, "nemotron")
 
+    def test_removed_postprocess_provider_setting_is_migrated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text(
+                'postprocess_provider = "none"\npostprocess_strength = 60\n', encoding="utf-8"
+            )
+            self.assertEqual(load_settings(path).postprocess_strength, 0)
+            path.write_text(
+                'postprocess_provider = "openrouter"\npostprocess_strength = 60\n', encoding="utf-8"
+            )
+            self.assertEqual(load_settings(path).postprocess_strength, 60)
+
     def test_postprocessing_failure_falls_back_to_raw_transcript(self) -> None:
-        settings = Settings(asr_provider="openrouter", postprocess_provider="openrouter")
+        settings = Settings(asr_provider="openrouter", postprocess_strength=50)
 
         with (
             patch("voicecommander.pipeline.transcribe", return_value="raw transcript"),
@@ -105,15 +117,16 @@ class EssentialTests(unittest.TestCase):
     def test_postprocessing_controls_are_sent_in_the_prompt(self, openrouter: Mock) -> None:
         openrouter.return_value = {"choices": [{"message": {"content": "Edited"}}]}
         settings = Settings(
-            postprocess_provider="openrouter",
             postprocess_style="professional",
             postprocess_strength=75,
         )
 
         self.assertEqual(postprocess_openrouter("Raw", settings, "secret"), "Edited")
         prompt = openrouter.call_args.args[2]["messages"][0]["content"]
-        self.assertIn("75/100", prompt)
+        self.assertIn("keeping the speaker's wording and sentence order", prompt)
         self.assertIn("professional prose", prompt)
+        self.assertIn("scratch that", prompt)
+        self.assertIn("language of the dictated text", prompt)
 
     @patch("voicecommander.pipeline._openrouter")
     def test_selected_openrouter_transcription_model_is_sent(self, openrouter: Mock) -> None:
@@ -137,7 +150,7 @@ class EssentialTests(unittest.TestCase):
         ):
             result = run_pipeline(
                 Path("recording.wav"),
-                Settings(postprocess_provider="openrouter", postprocess_strength=0),
+                Settings(postprocess_strength=0),
                 None,
                 "secret",
             )

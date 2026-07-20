@@ -26,8 +26,12 @@ OPENROUTER_ASR_MODELS = (
     "openai/whisper-large-v3-turbo",
     "qwen/qwen3-asr-flash-2026-02-10",
 )
-POSTPROCESS_PROVIDERS = ("none", "openrouter")
-POSTPROCESS_STYLES = ("faithful", "clean", "professional", "concise")
+POSTPROCESS_STYLES = {
+    "faithful": "Keep the speaker's wording and sentence order wherever possible.",
+    "clean": "Remove false starts and repetition, and improve readability.",
+    "professional": "Use clear, polished professional prose.",
+    "concise": "Tighten the wording and remove unnecessary repetition.",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,14 +43,13 @@ class Settings:
     asr_provider: str = "local"
     local_asr_model: str = "whisper"
     openrouter_asr_model: str = "openai/whisper-large-v3"
-    postprocess_provider: str = "none"
     postprocess_model: str = "openai/gpt-4o-mini"
     postprocess_style: str = "clean"
-    postprocess_strength: int = 50
+    postprocess_strength: int = 0
 
     @property
     def uses_openrouter(self) -> bool:
-        return "openrouter" in {self.asr_provider, self.postprocess_provider}
+        return self.asr_provider == "openrouter" or self.postprocess_strength > 0
 
 
 def validate(settings: Settings) -> None:
@@ -66,9 +69,7 @@ def validate(settings: Settings) -> None:
         raise ValueError("Invalid local ASR model")
     if settings.asr_provider == "openrouter" and not settings.openrouter_asr_model.strip():
         raise ValueError("OpenRouter transcription model is required")
-    if settings.postprocess_provider not in POSTPROCESS_PROVIDERS:
-        raise ValueError("Invalid post-processing provider")
-    if settings.postprocess_provider != "none" and not settings.postprocess_model.strip():
+    if settings.postprocess_strength > 0 and not settings.postprocess_model.strip():
         raise ValueError("Post-processing model is required")
     if settings.postprocess_style not in POSTPROCESS_STYLES:
         raise ValueError("Invalid post-processing style")
@@ -84,6 +85,9 @@ def load_settings(path: Path = CONFIG_PATH) -> Settings:
     data.pop("asr_model", None)
     if data.get("asr_provider") == "local" and "local_asr_model" not in data:
         data["local_asr_model"] = "nemotron"
+    # Removed setting: post-processing is now enabled purely by strength > 0.
+    if data.pop("postprocess_provider", None) == "none":
+        data["postprocess_strength"] = 0
     defaults = Settings()
     unknown = data.keys() - {field.name for field in fields(Settings)}
     if unknown:
@@ -150,12 +154,12 @@ def _microphones() -> list[str]:
         return []
 
 
-def show_settings(settings: Settings, operations_only: bool = False) -> Settings | None:
+def show_settings(settings: Settings) -> Settings | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
     root = tk.Tk()
-    root.title("VoiceCommander Operations" if operations_only else "VoiceCommander Settings")
+    root.title("VoiceCommander Settings")
     root.resizable(False, False)
     available_local_models = LOCAL_ASR_MODELS if nemotron_runtime_available() else ("whisper",)
     values = {field.name: tk.StringVar(value=str(getattr(settings, field.name))) for field in fields(Settings)}
@@ -165,7 +169,7 @@ def show_settings(settings: Settings, operations_only: bool = False) -> Settings
         values["local_asr_model"].set("whisper")
     result: Settings | None = None
 
-    setup_rows = [
+    rows = [
         ("Hotkey", "hotkey", None),
         ("Language", "language", None),
         ("Microphone", "input_device", _microphones()),
@@ -173,17 +177,13 @@ def show_settings(settings: Settings, operations_only: bool = False) -> Settings
         ("ASR provider", "asr_provider", ASR_PROVIDERS),
         ("Local transcription model", "local_asr_model", available_local_models),
         ("OpenRouter transcription model", "openrouter_asr_model", OPENROUTER_ASR_MODELS),
-    ]
-    operation_rows = [
-        ("Post-processing", "postprocess_provider", POSTPROCESS_PROVIDERS),
         ("Post-processing model", "postprocess_model", None),
-        ("Style", "postprocess_style", POSTPROCESS_STYLES),
+        ("Post-processing style", "postprocess_style", tuple(POSTPROCESS_STYLES)),
     ]
-    rows = operation_rows if operations_only else setup_rows + operation_rows
     for row, (label, name, choices) in enumerate(rows):
         ttk.Label(root, text=label).grid(row=row, column=0, padx=8, pady=5, sticky="w")
         widget = ttk.Combobox(root, textvariable=values[name], values=choices) if choices is not None else ttk.Entry(root, textvariable=values[name])
-        if name in {"asr_provider", "local_asr_model", "postprocess_provider", "postprocess_style"}:
+        if name in {"asr_provider", "local_asr_model", "postprocess_style"}:
             widget.configure(state="readonly")
         widget.grid(row=row, column=1, padx=8, pady=5, sticky="ew")
 
@@ -193,7 +193,7 @@ def show_settings(settings: Settings, operations_only: bool = False) -> Settings
     )
     strength = ttk.Frame(root)
     strength.grid(row=strength_row, column=1, padx=8, pady=5, sticky="ew")
-    ttk.Label(strength, text="Original").pack(side="left")
+    ttk.Label(strength, text="Off").pack(side="left")
     ttk.Scale(strength, from_=0, to=100, variable=values["postprocess_strength"]).pack(
         side="left", fill="x", expand=True, padx=6
     )
@@ -213,15 +213,9 @@ def show_settings(settings: Settings, operations_only: bool = False) -> Settings
             raw = {
                 field.name: str(values[field.name].get()).strip() for field in fields(Settings)
             }
-            updated = Settings(
-                **(
-                    raw
-                    | {
-                        "max_seconds": int(raw["max_seconds"]),
-                        "postprocess_strength": int(float(raw["postprocess_strength"])),
-                    }
-                )
-            )
+            raw["max_seconds"] = int(raw["max_seconds"])
+            raw["postprocess_strength"] = int(float(raw["postprocess_strength"]))
+            updated = Settings(**raw)
             entered_key = values["api_key"].get().strip()
             if updated.uses_openrouter and not (entered_key or get_api_key()):
                 raise ValueError("An OpenRouter API key is required for the selected providers")

@@ -29,8 +29,14 @@ Press your configured hotkey to start recording, press it again to stop, and
 the transcript is typed into whatever window you were working in. Hold Ctrl
 with that same hotkey (Ctrl+F8 by default) to open the full settings window.
 Saved changes, including the hotkey, microphone, and speech model, take effect
-immediately. Set post-processing strength to 0 to get your words back exactly
-as you spoke them.
+immediately.
+
+The editing-strength slider controls post-processing: at 0 it is off and your
+words come back exactly as you spoke them; anything above 0 sends the
+transcript text (never the audio) to the model you picked on OpenRouter, so it
+needs an API key even with local transcription. With post-processing on you
+can speak edits — "scratch that", "correction", "new paragraph", "bullet
+point", "quote ... unquote" — and they are applied instead of transcribed.
 
 Installed builds start quietly whenever you sign in, so the hotkey is simply
 always there.

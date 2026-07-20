@@ -212,10 +212,10 @@ class VoiceCommander:
         import keyboard
 
         logger.info(
-            "Starting VoiceCommander: hotkey=%s asr=%s postprocess=%s",
+            "Starting VoiceCommander: hotkey=%s asr=%s postprocess_strength=%s",
             self.settings.hotkey,
             self.settings.asr_provider,
-            self.settings.postprocess_provider,
+            self.settings.postprocess_strength,
         )
         self._register_hotkeys(keyboard)
         logger.info("VoiceCommander ready")
