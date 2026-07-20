@@ -155,6 +155,27 @@ class EssentialTests(unittest.TestCase):
         self.assertIn("scratch that", prompt)
         self.assertIn("language of the dictated text", prompt)
 
+    @patch("voicecommander.app._ctrl_pressed", return_value=False)
+    @patch("voicecommander.app.threading.Timer")
+    @patch("voicecommander.app.ThreadPoolExecutor")
+    @patch("voicecommander.app.Recorder")
+    def test_plain_hotkey_still_works_after_paste(
+        self, recorder_type: Mock, executor_type: Mock, timer: Mock, ctrl_pressed: Mock
+    ) -> None:
+        keyboard = Mock()
+        keyboard.is_pressed.return_value = True  # The library's cached state may be stale.
+        app = VoiceCommander(Settings(asr_provider="openrouter"))
+        app._register_hotkeys(keyboard)
+        callback = keyboard.add_hotkey.call_args_list[0].args[1]
+
+        callback()
+        app.state = State.IDLE
+        callback()
+
+        self.assertEqual(recorder_type.return_value.start.call_count, 2)
+        ctrl_pressed.assert_called()
+        keyboard.is_pressed.assert_not_called()
+
     @patch("voicecommander.pipeline._openrouter")
     def test_selected_openrouter_transcription_model_is_sent(self, openrouter: Mock) -> None:
         openrouter.return_value = {"text": "Transcript"}

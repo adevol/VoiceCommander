@@ -75,6 +75,10 @@ def _beep(frequency: int) -> None:
     winsound.Beep(frequency, 90)
 
 
+def _ctrl_pressed() -> bool:
+    return bool(ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000)
+
+
 class VoiceCommander:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -111,7 +115,7 @@ class VoiceCommander:
     def _register_hotkeys(self, keyboard: object) -> None:
         keyboard.add_hotkey(
             self.settings.hotkey,
-            lambda: None if keyboard.is_pressed("ctrl") else self.on_hotkey(),
+            lambda: None if _ctrl_pressed() else self.on_hotkey(),
         )
         keyboard.add_hotkey(f"ctrl+{self.settings.hotkey}", self.request_settings)
 
