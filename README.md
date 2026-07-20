@@ -41,6 +41,20 @@ point", "quote ... unquote" — and they are applied instead of transcribed.
 Installed builds start quietly whenever you sign in, so the hotkey is simply
 always there.
 
+## Live captions
+
+Installed builds include a **VoiceCommander Captions** Start menu shortcut.
+During development, run:
+
+```powershell
+uv run voicecommander --captions
+```
+
+This opens an always-on-top window that captions whatever your computer is
+playing — YouTube included — using the local Whisper model, so no audio
+leaves the machine. Captions appear roughly one chunk (about eight seconds)
+behind live playback and use the language from settings.
+
 ## Developing
 
 You will need Python 3.13. From there, four commands cover the daily routine:

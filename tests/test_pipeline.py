@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import queue
 import tempfile
+import threading
 import unittest
 from io import BytesIO
 from pathlib import Path
@@ -9,6 +11,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
+from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.pipeline import (
     NEMOTRON_MODEL,
     _openrouter,
@@ -98,6 +101,30 @@ class EssentialTests(unittest.TestCase):
                 'postprocess_provider = "openrouter"\npostprocess_strength = 60\n', encoding="utf-8"
             )
             self.assertEqual(load_settings(path).postprocess_strength, 60)
+
+    def test_caption_noise_labels_are_dropped(self) -> None:
+        self.assertTrue(is_speech("Hello there"))
+        for noise in ("", "[BLANK_AUDIO]", "(music)", "[Musik]"):
+            self.assertFalse(is_speech(noise))
+
+    def test_captions_drop_backlog_and_stop_after_model_failure(self) -> None:
+        chunks = queue.Queue(maxsize=1)
+        _put_latest(chunks, "old")
+        _put_latest(chunks, "new")
+        self.assertEqual(chunks.get_nowait(), "new")
+
+        lines = queue.Queue()
+        stop = threading.Event()
+        with (
+            patch(
+                "voicecommander.captions.load_local_model",
+                side_effect=RuntimeError("model failed"),
+            ),
+            self.assertLogs("voicecommander.captions", level="ERROR"),
+        ):
+            _transcribe(chunks, lines, Settings(), stop)
+        self.assertTrue(stop.is_set())
+        self.assertIn("model failed", lines.get_nowait())
 
     def test_postprocessing_failure_falls_back_to_raw_transcript(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=50)

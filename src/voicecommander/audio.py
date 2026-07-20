@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import tempfile
 import wave
 from pathlib import Path
@@ -12,6 +11,19 @@ CHANNELS = 1
 SAMPLE_WIDTH = 2
 
 logger = logging.getLogger(__name__)
+
+
+def write_wav(data: bytes) -> Path:
+    directory = Path(tempfile.gettempdir()) / "VoiceCommander"
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix="recording-", suffix=".wav", dir=directory, delete=False) as temporary:
+        path = Path(temporary.name)
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(CHANNELS)
+        output.setsampwidth(SAMPLE_WIDTH)
+        output.setframerate(SAMPLE_RATE)
+        output.writeframes(data)
+    return path
 
 
 class Recorder:
@@ -59,16 +71,6 @@ class Recorder:
         stream.close()
         if not self._chunks:
             raise RuntimeError("No audio was recorded")
-
-        directory = Path(tempfile.gettempdir()) / "VoiceCommander"
-        directory.mkdir(parents=True, exist_ok=True)
-        descriptor, filename = tempfile.mkstemp(prefix="recording-", suffix=".wav", dir=directory)
-        os.close(descriptor)
-        path = Path(filename)
-        with wave.open(str(path), "wb") as output:
-            output.setnchannels(CHANNELS)
-            output.setsampwidth(SAMPLE_WIDTH)
-            output.setframerate(SAMPLE_RATE)
-            output.writeframes(b"".join(self._chunks))
+        path = write_wav(b"".join(self._chunks))
         self._chunks.clear()
         return path

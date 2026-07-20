@@ -10,6 +10,7 @@ from voicecommander.settings import CONFIG_PATH, Settings, load_settings, local_
 def main() -> int:
     parser = argparse.ArgumentParser(description="VoiceCommander")
     parser.add_argument("--settings", action="store_true", help="edit settings and exit")
+    parser.add_argument("--captions", action="store_true", help="live-caption system audio in a window")
     args = parser.parse_args()
 
     configure_logging()
@@ -21,6 +22,11 @@ def main() -> int:
         logger.exception("Configuration is invalid; opening settings with defaults")
         config = Settings()
         open_settings = True
+
+    if args.captions:
+        from voicecommander.captions import run_captions
+
+        return run_captions(config)
 
     needs_setup = not CONFIG_PATH.exists() or (
         config.asr_provider == "local"

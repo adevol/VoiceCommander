@@ -35,6 +35,7 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 [Icons]
 Name: "{group}\VoiceCommander"; Filename: "{app}\VoiceCommander.exe"; WorkingDir: "{app}"
 Name: "{group}\VoiceCommander Settings"; Filename: "{app}\VoiceCommander.exe"; Parameters: "--settings"; WorkingDir: "{app}"
+Name: "{group}\VoiceCommander Captions"; Filename: "{app}\VoiceCommander.exe"; Parameters: "--captions"; WorkingDir: "{app}"
 Name: "{group}\Uninstall VoiceCommander"; Filename: "{uninstallexe}"
 Name: "{userstartup}\VoiceCommander"; Filename: "{app}\VoiceCommander.exe"; WorkingDir: "{app}"
 
