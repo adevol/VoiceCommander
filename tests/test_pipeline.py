@@ -102,6 +102,12 @@ class EssentialTests(unittest.TestCase):
             )
             self.assertEqual(load_settings(path).postprocess_strength, 60)
 
+    def test_removed_vocabulary_setting_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text('vocabulary = "Bahnhof"\n', encoding="utf-8")
+            self.assertEqual(load_settings(path), Settings())
+
     def test_caption_noise_labels_are_dropped(self) -> None:
         self.assertTrue(is_speech("Hello there"))
         for noise in ("", "[BLANK_AUDIO]", "(music)", "[Musik]"):
