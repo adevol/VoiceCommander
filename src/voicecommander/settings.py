@@ -82,13 +82,6 @@ def load_settings(path: Path = CONFIG_PATH) -> Settings:
         return Settings()
     with path.open("rb") as file:
         data = tomllib.load(file)
-    data.pop("asr_model", None)
-    data.pop("vocabulary", None)
-    if data.get("asr_provider") == "local" and "local_asr_model" not in data:
-        data["local_asr_model"] = "nemotron"
-    # Removed setting: post-processing is now enabled purely by strength > 0.
-    if data.pop("postprocess_provider", None) == "none":
-        data["postprocess_strength"] = 0
     defaults = Settings()
     unknown = data.keys() - {field.name for field in fields(Settings)}
     if unknown:

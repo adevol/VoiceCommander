@@ -77,36 +77,9 @@ class EssentialTests(unittest.TestCase):
             self.assertEqual(load_settings(path), settings)
             self.assertNotIn("api_key", path.read_text(encoding="utf-8"))
             with path.open("a", encoding="utf-8") as config:
-                config.write('asr_model = "obsolete"\n')
-            self.assertEqual(load_settings(path), settings)
-            with path.open("a", encoding="utf-8") as config:
                 config.write('hotkeys = "f9"\n')
             with self.assertRaisesRegex(ValueError, "Unknown settings: hotkeys"):
                 load_settings(path)
-
-    def test_existing_local_config_keeps_nemotron(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.toml"
-            path.write_text('asr_provider = "local"\n', encoding="utf-8")
-            self.assertEqual(load_settings(path).local_asr_model, "nemotron")
-
-    def test_removed_postprocess_provider_setting_is_migrated(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.toml"
-            path.write_text(
-                'postprocess_provider = "none"\npostprocess_strength = 60\n', encoding="utf-8"
-            )
-            self.assertEqual(load_settings(path).postprocess_strength, 0)
-            path.write_text(
-                'postprocess_provider = "openrouter"\npostprocess_strength = 60\n', encoding="utf-8"
-            )
-            self.assertEqual(load_settings(path).postprocess_strength, 60)
-
-    def test_removed_vocabulary_setting_is_ignored(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.toml"
-            path.write_text('vocabulary = "Bahnhof"\n', encoding="utf-8")
-            self.assertEqual(load_settings(path), Settings())
 
     def test_caption_noise_labels_are_dropped(self) -> None:
         self.assertTrue(is_speech("Hello there"))
