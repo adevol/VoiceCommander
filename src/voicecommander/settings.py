@@ -13,6 +13,15 @@ KEYRING_SERVICE = "VoiceCommander"
 KEYRING_USER = "OpenRouter"
 ASR_PROVIDERS = ("local", "openrouter")
 LOCAL_ASR_MODELS = ("whisper", "nemotron")
+LANGUAGES = {
+    "English": "en-US",
+    "French": "fr-FR",
+    "German": "de-DE",
+    "Italian": "it-IT",
+    "Portuguese": "pt-PT",
+    "Russian": "ru-RU",
+    "Spanish": "es-ES",
+}
 OPENROUTER_ASR_MODELS = (
     "deepgram/nova-3",
     "google/chirp-3",
@@ -63,12 +72,14 @@ def validate(settings: Settings) -> None:
         raise ValueError("The recording hotkey cannot use Ctrl because Ctrl+hotkey opens the menu")
     if not 1 <= settings.max_seconds <= 3600:
         raise ValueError("Recording limit must be between 1 and 3600 seconds")
+    if settings.language not in LANGUAGES.values():
+        raise ValueError("Invalid language")
     if settings.asr_provider not in ASR_PROVIDERS:
         raise ValueError("Invalid ASR provider")
     if settings.local_asr_model not in LOCAL_ASR_MODELS:
         raise ValueError("Invalid local ASR model")
-    if settings.asr_provider == "openrouter" and not settings.openrouter_asr_model.strip():
-        raise ValueError("OpenRouter transcription model is required")
+    if settings.openrouter_asr_model not in OPENROUTER_ASR_MODELS:
+        raise ValueError("Invalid OpenRouter transcription model")
     if settings.postprocess_strength > 0 and not settings.postprocess_model.strip():
         raise ValueError("Post-processing model is required")
     if settings.postprocess_style not in POSTPROCESS_STYLES:
@@ -157,6 +168,9 @@ def show_settings(settings: Settings) -> Settings | None:
     root.resizable(False, False)
     available_local_models = LOCAL_ASR_MODELS if nemotron_runtime_available() else ("whisper",)
     values = {field.name: tk.StringVar(value=str(getattr(settings, field.name))) for field in fields(Settings)}
+    values["language"].set(
+        next(name for name, code in LANGUAGES.items() if code == settings.language)
+    )
     values["postprocess_strength"] = tk.IntVar(value=settings.postprocess_strength)
     values["api_key"] = tk.StringVar()
     if settings.local_asr_model not in available_local_models:
@@ -165,7 +179,7 @@ def show_settings(settings: Settings) -> Settings | None:
 
     rows = [
         ("Hotkey", "hotkey", None),
-        ("Language", "language", None),
+        ("Language", "language", tuple(LANGUAGES)),
         ("Microphone", "input_device", _microphones()),
         ("Recording limit (seconds)", "max_seconds", None),
         ("ASR provider", "asr_provider", ASR_PROVIDERS),
@@ -177,7 +191,13 @@ def show_settings(settings: Settings) -> Settings | None:
     for row, (label, name, choices) in enumerate(rows):
         ttk.Label(root, text=label).grid(row=row, column=0, padx=8, pady=5, sticky="w")
         widget = ttk.Combobox(root, textvariable=values[name], values=choices) if choices is not None else ttk.Entry(root, textvariable=values[name])
-        if name in {"asr_provider", "local_asr_model", "postprocess_style"}:
+        if name in {
+            "language",
+            "asr_provider",
+            "local_asr_model",
+            "openrouter_asr_model",
+            "postprocess_style",
+        }:
             widget.configure(state="readonly")
         widget.grid(row=row, column=1, padx=8, pady=5, sticky="ew")
 
@@ -207,6 +227,7 @@ def show_settings(settings: Settings) -> Settings | None:
             raw = {
                 field.name: str(values[field.name].get()).strip() for field in fields(Settings)
             }
+            raw["language"] = LANGUAGES[raw["language"]]
             raw["max_seconds"] = int(raw["max_seconds"])
             raw["postprocess_strength"] = int(float(raw["postprocess_strength"]))
             updated = Settings(**raw)

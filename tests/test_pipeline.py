@@ -21,7 +21,7 @@ from voicecommander.pipeline import (
     transcribe_local,
     transcribe_openrouter,
 )
-from voicecommander.settings import Settings, load_settings, save_settings
+from voicecommander.settings import Settings, load_settings, save_settings, validate
 
 
 class EssentialTests(unittest.TestCase):
@@ -80,6 +80,12 @@ class EssentialTests(unittest.TestCase):
                 config.write('hotkeys = "f9"\n')
             with self.assertRaisesRegex(ValueError, "Unknown settings: hotkeys"):
                 load_settings(path)
+
+    def test_settings_reject_unsupported_asr_options(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Invalid language"):
+            validate(Settings(language="zh-CN"))
+        with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
+            validate(Settings(openrouter_asr_model="custom/transcriber"))
 
     def test_caption_noise_labels_are_dropped(self) -> None:
         self.assertTrue(is_speech("Hello there"))
@@ -168,7 +174,9 @@ class EssentialTests(unittest.TestCase):
             )
 
         self.assertEqual(result, "Transcript")
-        self.assertEqual(openrouter.call_args.args[2]["model"], "google/chirp-3")
+        payload = openrouter.call_args.args[2]
+        self.assertEqual(payload["model"], "google/chirp-3")
+        self.assertEqual(payload["language"], "en")
 
     def test_zero_editing_strength_keeps_raw_transcript(self) -> None:
         with (

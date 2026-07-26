@@ -73,8 +73,9 @@ file; during development you can also set the `OPENROUTER_API_KEY` environment
 variable, which takes precedence. (`.env` files are not read.) Local
 transcription defaults to multilingual Whisper. Run `uv sync --extra nvidia` to
 make Nemotron appear as a second local option. OpenRouter models remain
-available from the curated dropdown, which also accepts another model ID. On an
-NVIDIA GPU, Nemotron runs in FP16; on a CPU, it falls back to FP32.
+available from the curated dropdown. Language choices are limited to the seven
+locales supported by every bundled transcription model. On an NVIDIA GPU,
+Nemotron runs in FP16; on a CPU, it falls back to FP32.
 
 ## Building the installers
 
