@@ -4,7 +4,6 @@ import json
 import os
 import tomllib
 from dataclasses import dataclass, fields
-from importlib.util import find_spec
 from pathlib import Path
 
 APP_DIR = Path(os.environ.get("APPDATA", Path.home())) / "VoiceCommander"
@@ -12,7 +11,7 @@ CONFIG_PATH = APP_DIR / "config.toml"
 KEYRING_SERVICE = "VoiceCommander"
 KEYRING_USER = "OpenRouter"
 ASR_PROVIDERS = ("local", "openrouter")
-LOCAL_ASR_MODELS = ("whisper", "nemotron")
+LOCAL_ASR_MODELS = ("whisper",)
 LANGUAGES = {
     "English": "en-US",
     "French": "fr-FR",
@@ -132,19 +131,6 @@ def save_api_key(api_key: str) -> None:
     keyring.set_password(KEYRING_SERVICE, KEYRING_USER, api_key.strip())
 
 
-def nemotron_runtime_available() -> bool:
-    try:
-        return all(find_spec(package) is not None for package in ("librosa", "torch", "transformers"))
-    except ImportError:
-        return False
-
-
-def local_runtime_available(local_asr_model: str = "whisper") -> bool:
-    return local_asr_model == "whisper" or (
-        local_asr_model == "nemotron" and nemotron_runtime_available()
-    )
-
-
 def _microphones() -> list[str]:
     try:
         import sounddevice
@@ -166,15 +152,12 @@ def show_settings(settings: Settings) -> Settings | None:
     root = tk.Tk()
     root.title("VoiceCommander Settings")
     root.resizable(False, False)
-    available_local_models = LOCAL_ASR_MODELS if nemotron_runtime_available() else ("whisper",)
     values = {field.name: tk.StringVar(value=str(getattr(settings, field.name))) for field in fields(Settings)}
     values["language"].set(
         next(name for name, code in LANGUAGES.items() if code == settings.language)
     )
     values["postprocess_strength"] = tk.IntVar(value=settings.postprocess_strength)
     values["api_key"] = tk.StringVar()
-    if settings.local_asr_model not in available_local_models:
-        values["local_asr_model"].set("whisper")
     result: Settings | None = None
 
     rows = [
@@ -183,7 +166,7 @@ def show_settings(settings: Settings) -> Settings | None:
         ("Microphone", "input_device", _microphones()),
         ("Recording limit (seconds)", "max_seconds", None),
         ("ASR provider", "asr_provider", ASR_PROVIDERS),
-        ("Local transcription model", "local_asr_model", available_local_models),
+        ("Local transcription model", "local_asr_model", LOCAL_ASR_MODELS),
         ("OpenRouter transcription model", "openrouter_asr_model", OPENROUTER_ASR_MODELS),
         ("Post-processing model", "postprocess_model", None),
         ("Post-processing style", "postprocess_style", tuple(POSTPROCESS_STYLES)),

@@ -4,7 +4,7 @@ import argparse
 import logging
 
 from voicecommander.app import VoiceCommander, configure_logging
-from voicecommander.settings import CONFIG_PATH, Settings, load_settings, local_runtime_available, show_settings
+from voicecommander.settings import CONFIG_PATH, Settings, load_settings, show_settings
 
 
 def main() -> int:
@@ -28,11 +28,7 @@ def main() -> int:
 
         return run_captions(config)
 
-    needs_setup = not CONFIG_PATH.exists() or (
-        config.asr_provider == "local"
-        and not local_runtime_available(config.local_asr_model)
-    )
-    if open_settings or needs_setup:
+    if open_settings or not CONFIG_PATH.exists():
         updated = show_settings(config)
         if updated is None:
             logger.info("Settings closed without saving")

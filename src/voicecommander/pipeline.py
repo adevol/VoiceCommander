@@ -16,7 +16,6 @@ from urllib.request import Request, urlopen
 from .settings import APP_DIR, POSTPROCESS_STYLES, Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
-NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 WHISPER_DIR = APP_DIR / "whisper.cpp"
 WHISPER_MODEL = "ggml-base-q5_1.bin"
 WHISPER_MODEL_URL = (
@@ -29,7 +28,7 @@ WHISPER_RUNTIME_URL = (
 )
 WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 logger = logging.getLogger(__name__)
-LoadedModel = tuple[str, Any, Any]
+LoadedModel = tuple[Path, Path]
 
 
 def _download(url: str, destination: Path, expected_sha256: str) -> None:
@@ -81,79 +80,44 @@ def _ensure_whisper() -> tuple[Path, Path]:
 
 
 def load_local_model(local_asr_model: str = "whisper") -> LoadedModel:
-    if local_asr_model == "whisper":
-        executable, model = _ensure_whisper()
-        logger.info("Loaded multilingual Whisper model %s", model)
-        return "whisper", executable, model
-    if local_asr_model != "nemotron":
+    if local_asr_model != "whisper":
         raise RuntimeError(f"Unsupported local ASR model: {local_asr_model}")
-    try:
-        import torch
-        from transformers import AutoModelForRNNT, AutoProcessor
-    except ImportError as error:
-        raise RuntimeError("Nemotron requires the 'nvidia' optional dependencies") from error
-
-    logger.info("Loading local ASR model %s", NEMOTRON_MODEL)
-    processor = AutoProcessor.from_pretrained(NEMOTRON_MODEL)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float16 if device == "cuda" else torch.float32
-    model = AutoModelForRNNT.from_pretrained(NEMOTRON_MODEL, dtype=dtype)
-    model.to(device)
-    model.eval()
-    logger.info("Local ASR model loaded on %s with %s", device, dtype)
-    return "nemotron", processor, model
+    executable, model = _ensure_whisper()
+    logger.info("Loaded multilingual Whisper model %s", model)
+    return executable, model
 
 
 def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) -> str:
-    kind, first, second = loaded_model
-    if kind == "whisper":
-        output_base = path.with_suffix(path.suffix + ".whisper")
-        output_path = Path(str(output_base) + ".txt")
-        # ponytail: reloads 57 MiB per dictation; use the DLL if profiling shows startup lag.
-        try:
-            result = subprocess.run(
-                [
-                    str(first),
-                    "-m",
-                    str(second),
-                    "-f",
-                    str(path),
-                    "-l",
-                    settings.language.split("-", 1)[0].lower(),
-                    "-otxt",
-                    "-of",
-                    str(output_base),
-                    "-np",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=max(300, settings.max_seconds * 4),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode:
-                detail = result.stderr.strip()[-500:]
-                raise RuntimeError(f"whisper.cpp failed{f': {detail}' if detail else ''}")
-            text = output_path.read_text(encoding="utf-8").strip()
-        finally:
-            output_path.unlink(missing_ok=True)
-        if not text:
-            raise RuntimeError("Local ASR returned an empty transcript")
-        return text
-
-    if kind != "nemotron":
-        raise RuntimeError(f"Unsupported loaded ASR model: {kind}")
-    import torch
-    from transformers.audio_utils import load_audio
-
-    processor, model = first, second
-    sample_rate = processor.feature_extractor.sampling_rate
-    audio = load_audio(str(path), sampling_rate=sample_rate)
-    inputs = processor(audio, sampling_rate=sample_rate, language=settings.language, return_tensors="pt")
-    inputs = inputs.to(model.device, dtype=model.dtype)
-    with torch.inference_mode():
-        output = model.generate(**inputs, return_dict_in_generate=True)
-    decoded = processor.decode(output.sequences, skip_special_tokens=True)
-    text = (" ".join(decoded) if isinstance(decoded, list) else decoded).strip()
+    executable, model = loaded_model
+    output_base = path.with_suffix(path.suffix + ".whisper")
+    output_path = Path(str(output_base) + ".txt")
+    # ponytail: reloads 57 MiB per dictation; use the DLL if profiling shows startup lag.
+    try:
+        result = subprocess.run(
+            [
+                str(executable),
+                "-m",
+                str(model),
+                "-f",
+                str(path),
+                "-l",
+                settings.language.split("-", 1)[0].lower(),
+                "-otxt",
+                "-of",
+                str(output_base),
+                "-np",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=max(300, settings.max_seconds * 4),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if result.returncode:
+            detail = result.stderr.strip()[-500:]
+            raise RuntimeError(f"whisper.cpp failed{f': {detail}' if detail else ''}")
+        text = output_path.read_text(encoding="utf-8").strip()
+    finally:
+        output_path.unlink(missing_ok=True)
     if not text:
         raise RuntimeError("Local ASR returned an empty transcript")
     return text

@@ -13,7 +13,6 @@ from urllib.error import HTTPError
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.pipeline import (
-    NEMOTRON_MODEL,
     _openrouter,
     load_local_model,
     postprocess_openrouter,
@@ -25,24 +24,9 @@ from voicecommander.settings import Settings, load_settings, save_settings, vali
 
 
 class EssentialTests(unittest.TestCase):
-    def test_local_model_uses_half_precision_on_cuda(self) -> None:
-        torch = Mock(float16="float16", float32="float32")
-        torch.cuda.is_available.return_value = True
-        model = Mock()
-        model_type = Mock()
-        model_type.from_pretrained.return_value = model
-        transformers = Mock(
-            AutoModelForRNNT=model_type,
-            AutoProcessor=Mock(),
-        )
-
-        with patch.dict(modules, {"torch": torch, "transformers": transformers}):
+    def test_unknown_local_model_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
             load_local_model("nemotron")
-
-        model_type.from_pretrained.assert_called_once_with(
-            NEMOTRON_MODEL, dtype="float16"
-        )
-        model.to.assert_called_once_with("cuda")
 
     @patch("voicecommander.pipeline.subprocess.run")
     def test_multilingual_whisper_uses_selected_language(self, run: Mock) -> None:
@@ -54,7 +38,7 @@ class EssentialTests(unittest.TestCase):
             result = transcribe_local(
                 path,
                 Settings(language="de-DE"),
-                ("whisper", Path("whisper-cli.exe"), Path("ggml-base-q5_1.bin")),
+                (Path("whisper-cli.exe"), Path("ggml-base-q5_1.bin")),
             )
 
         self.assertEqual(result, "Guten Tag")
@@ -66,7 +50,6 @@ class EssentialTests(unittest.TestCase):
             hotkey="f9",
             input_device='2: Mic "Main"',
             max_seconds=42,
-            local_asr_model="nemotron",
             openrouter_asr_model="google/chirp-3",
             postprocess_style="professional",
             postprocess_strength=75,
