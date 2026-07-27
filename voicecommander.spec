@@ -1,8 +1,4 @@
-import os
-
 from PyInstaller.utils.hooks import collect_data_files
-
-nvidia_build = os.environ.get("VOICECOMMANDER_BUILD_NVIDIA") == "1"
 
 a = Analysis(
     ["src/voicecommander/__main__.py"],
@@ -11,7 +7,7 @@ a = Analysis(
     datas=collect_data_files("soundcard"),
     hiddenimports=["keyring.backends.Windows"],
     # numpy stays in: soundcard needs it for the captions loopback capture.
-    excludes=[] if nvidia_build else ["librosa", "llvmlite", "numba", "scipy", "sklearn", "torch", "transformers"],
+    excludes=["librosa", "llvmlite", "numba", "scipy", "sklearn", "torch", "transformers"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(
