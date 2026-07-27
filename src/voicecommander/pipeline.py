@@ -13,16 +13,10 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from .settings import APP_DIR, POSTPROCESS_STYLES, Settings
+from .settings import APP_DIR, POSTPROCESS_STYLES, WHISPER_MODELS, WHISPER_REVISION, Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 WHISPER_DIR = APP_DIR / "whisper.cpp"
-WHISPER_MODEL = "ggml-base-q5_1.bin"
-WHISPER_MODEL_URL = (
-    f"https://huggingface.co/ggerganov/whisper.cpp/resolve/"
-    f"f281eb45af861ab5e5297d23694b7d46e090c02c/{WHISPER_MODEL}"
-)
-WHISPER_MODEL_SHA256 = "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"
 WHISPER_RUNTIME_URL = (
     "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip"
 )
@@ -48,7 +42,7 @@ def _download(url: str, destination: Path, expected_sha256: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _ensure_whisper() -> tuple[Path, Path]:
+def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path]:
     WHISPER_DIR.mkdir(parents=True, exist_ok=True)
     executable = WHISPER_DIR / "whisper-cli.exe"
     runtime_marker = WHISPER_DIR / f".runtime-{WHISPER_RUNTIME_SHA256}"
@@ -71,18 +65,20 @@ def _ensure_whisper() -> tuple[Path, Path]:
             raise RuntimeError("The whisper.cpp runtime archive was incomplete")
         runtime_marker.touch()
 
-    model = WHISPER_DIR / WHISPER_MODEL
-    model_marker = WHISPER_DIR / f".model-{WHISPER_MODEL_SHA256}"
-    if not (model_marker.exists() and model.exists()):
-        _download(WHISPER_MODEL_URL, model, WHISPER_MODEL_SHA256)
-        model_marker.touch()
+    # Each size has its own filename, and _download only publishes a verified file,
+    # so the name on disk is enough to tell what is already there.
+    filename, expected_sha256 = WHISPER_MODELS[local_asr_model]
+    model = WHISPER_DIR / filename
+    if not model.exists():
+        url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/{filename}"
+        _download(url, model, expected_sha256)
     return executable, model
 
 
-def load_local_model(local_asr_model: str = "whisper") -> LoadedModel:
-    if local_asr_model != "whisper":
+def load_local_model(local_asr_model: str = "base") -> LoadedModel:
+    if local_asr_model not in WHISPER_MODELS:
         raise RuntimeError(f"Unsupported local ASR model: {local_asr_model}")
-    executable, model = _ensure_whisper()
+    executable, model = _ensure_whisper(local_asr_model)
     logger.info("Loaded multilingual Whisper model %s", model)
     return executable, model
 

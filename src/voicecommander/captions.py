@@ -61,7 +61,9 @@ def _transcribe(
     import numpy
 
     try:
-        model = load_local_model("whisper")
+        # ponytail: pinned to the smallest size regardless of the dictation setting, because
+        # every chunk reloads the model; revisit together with a resident whisper-server.
+        model = load_local_model("base")
     except Exception as error:
         logger.exception("Could not load Whisper for captions")
         lines.put(f"Captions unavailable: {error}")

@@ -8,10 +8,22 @@ or a cloud model through OpenRouter.
 ## Where your voice goes
 
 That is the one question worth answering up front, and you answer it in
-settings. Local transcription is the default and nothing leaves your machine:
-the pinned, verified CPU-only `whisper.cpp` runtime and multilingual quantized
-Base model download on first use, about 100 MiB in total. Choosing an
-OpenRouter model instead sends your audio to that provider.
+settings. Local transcription is the default and nothing leaves your machine;
+choosing an OpenRouter model instead sends your audio to that provider.
+
+Local transcription downloads the pinned, verified CPU-only `whisper.cpp`
+runtime once, then whichever model size you picked. Bigger is more accurate and
+slower:
+
+| Size | Download | |
+| --- | ---: | --- |
+| `base` | 57 MiB | The default. Quickest, and the least accurate. |
+| `small` | 181 MiB | Three times lighter than turbo and quicker with it; the middle ground. |
+| `large-v3-turbo` | 547 MiB | The most accurate on offer: minimal degradation versus full large-v3, at a fraction of its cost. |
+
+A size downloads only when you first select it, and is checked against a pinned
+SHA-256 before anything uses it. Switching sizes leaves the old file in place,
+so switching back is instant.
 
 ## How you use it
 
@@ -61,8 +73,10 @@ its model weights from Hugging Face the first time it starts. Any OpenRouter key
 you enter in settings goes into Windows Credential Manager, not into a config
 file; during development you can also set the `OPENROUTER_API_KEY` environment
 variable, which takes precedence. (`.env` files are not read.) Local
-transcription uses multilingual Whisper; OpenRouter models are available from
-the curated dropdown. Language choices are limited to seven locales.
+transcription uses multilingual Whisper at the size you picked in settings;
+OpenRouter models are available from the curated dropdown. Language choices are
+limited to seven locales. Live captions always use `base` regardless of that
+setting, because they reload the model once per chunk.
 
 ## Building the installer
 

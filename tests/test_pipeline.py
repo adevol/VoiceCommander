@@ -13,6 +13,8 @@ from urllib.error import HTTPError
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.pipeline import (
+    WHISPER_RUNTIME_SHA256,
+    _ensure_whisper,
     _openrouter,
     load_local_model,
     postprocess_openrouter,
@@ -20,13 +22,38 @@ from voicecommander.pipeline import (
     transcribe_local,
     transcribe_openrouter,
 )
-from voicecommander.settings import Settings, load_settings, save_settings, validate
+from voicecommander.settings import (
+    WHISPER_MODELS,
+    Settings,
+    load_settings,
+    save_settings,
+    validate,
+)
 
 
 class EssentialTests(unittest.TestCase):
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
             load_local_model("nemotron")
+
+    @patch("voicecommander.pipeline._download")
+    def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
+        for name, (filename, expected_sha256) in WHISPER_MODELS.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as directory:
+                whisper_dir = Path(directory)
+                # Pretend the runtime is already unpacked so only the model download runs.
+                (whisper_dir / "whisper-cli.exe").touch()
+                (whisper_dir / f".runtime-{WHISPER_RUNTIME_SHA256}").touch()
+                download.reset_mock()
+
+                with patch("voicecommander.pipeline.WHISPER_DIR", whisper_dir):
+                    _, model = _ensure_whisper(name)
+
+                url, destination, sha256 = download.call_args.args
+                self.assertEqual(model.name, filename)
+                self.assertEqual(destination, whisper_dir / filename)
+                self.assertEqual(sha256, expected_sha256)
+                self.assertIn(f"/{filename}", url)
 
     @patch("voicecommander.pipeline.subprocess.run")
     def test_multilingual_whisper_uses_selected_language(self, run: Mock) -> None:
@@ -50,6 +77,7 @@ class EssentialTests(unittest.TestCase):
             hotkey="f9",
             input_device='2: Mic "Main"',
             max_seconds=42,
+            local_asr_model="small",
             openrouter_asr_model="google/chirp-3",
             postprocess_style="professional",
             postprocess_strength=75,
@@ -69,6 +97,8 @@ class EssentialTests(unittest.TestCase):
             validate(Settings(language="zh-CN"))
         with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
             validate(Settings(openrouter_asr_model="custom/transcriber"))
+        with self.assertRaisesRegex(ValueError, "Invalid local ASR model"):
+            validate(Settings(local_asr_model="tiny"))
 
     def test_caption_noise_labels_are_dropped(self) -> None:
         self.assertTrue(is_speech("Hello there"))
@@ -266,7 +296,7 @@ class EssentialTests(unittest.TestCase):
             self.assertIsNone(app._local_model)
             app.run()
 
-        executor_type.return_value.submit.assert_called_once_with(load_local_model, "whisper")
+        executor_type.return_value.submit.assert_called_once_with(load_local_model, "base")
         self.assertIsNotNone(app._local_model)
 
     @patch("voicecommander.pipeline.urlopen")

@@ -11,7 +11,20 @@ CONFIG_PATH = APP_DIR / "config.toml"
 KEYRING_SERVICE = "VoiceCommander"
 KEYRING_USER = "OpenRouter"
 ASR_PROVIDERS = ("local", "openrouter")
-LOCAL_ASR_MODELS = ("whisper",)
+# Quantized multilingual whisper.cpp builds, largest last. The hashes are the Hugging Face
+# LFS oids at WHISPER_REVISION; _download refuses any file that does not match.
+WHISPER_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
+WHISPER_MODELS = {
+    "base": ("ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"),
+    "small": ("ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"),
+    # No medium: at 514 MiB it is 33 MiB smaller than turbo while being slower and less
+    # accurate, so nothing would ever be worth picking it for.
+    "large-v3-turbo": (
+        "ggml-large-v3-turbo-q5_0.bin",
+        "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    ),
+}
+LOCAL_ASR_MODELS = tuple(WHISPER_MODELS)
 LANGUAGES = {
     "English": "en-US",
     "French": "fr-FR",
@@ -49,7 +62,7 @@ class Settings:
     input_device: str = ""
     max_seconds: int = 300
     asr_provider: str = "local"
-    local_asr_model: str = "whisper"
+    local_asr_model: str = "base"
     openrouter_asr_model: str = "openai/whisper-large-v3"
     postprocess_model: str = "openai/gpt-4o-mini"
     postprocess_style: str = "clean"
