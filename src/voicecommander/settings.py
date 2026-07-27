@@ -173,7 +173,10 @@ def show_settings(settings: Settings) -> Settings | None:
     ]
     for row, (label, name, choices) in enumerate(rows):
         ttk.Label(root, text=label).grid(row=row, column=0, padx=8, pady=5, sticky="w")
-        widget = ttk.Combobox(root, textvariable=values[name], values=choices) if choices is not None else ttk.Entry(root, textvariable=values[name])
+        if choices is None:
+            widget = ttk.Entry(root, textvariable=values[name])
+        else:
+            widget = ttk.Combobox(root, textvariable=values[name], values=choices)
         if name in {
             "language",
             "asr_provider",

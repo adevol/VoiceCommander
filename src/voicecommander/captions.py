@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+from contextlib import suppress
 
 from .audio import SAMPLE_RATE, write_wav
 from .pipeline import load_local_model, transcribe_local
@@ -18,15 +19,10 @@ SILENCE_PEAK = 0.005
 
 
 def _put_latest(items: queue.Queue, item: object) -> None:
-    while True:
-        try:
-            items.put_nowait(item)
-            return
-        except queue.Full:
-            try:
-                items.get_nowait()
-            except queue.Empty:
-                pass
+    # _capture is the only producer, so the slot cannot refill between the drain and the put.
+    with suppress(queue.Empty):
+        items.get_nowait()
+    items.put_nowait(item)
 
 
 def is_speech(text: str) -> bool:

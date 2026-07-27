@@ -251,6 +251,24 @@ class EssentialTests(unittest.TestCase):
         self.assertEqual(app.settings, updated)
         executor_type.return_value.shutdown.assert_called_once()
 
+    def test_switching_to_local_transcription_loads_the_model(self) -> None:
+        with (
+            patch("voicecommander.app.Recorder"),
+            patch("voicecommander.app.ThreadPoolExecutor") as executor_type,
+            patch("voicecommander.app.threading.Event") as event_type,
+            patch("voicecommander.app._beep"),
+            patch("voicecommander.app.show_settings") as show_settings,
+            patch.dict(modules, {"keyboard": Mock()}),
+        ):
+            event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]
+            show_settings.return_value = Settings(asr_provider="local")
+            app = VoiceCommander(Settings(asr_provider="openrouter"))
+            self.assertIsNone(app._local_model)
+            app.run()
+
+        executor_type.return_value.submit.assert_called_once_with(load_local_model, "whisper")
+        self.assertIsNotNone(app._local_model)
+
     @patch("voicecommander.pipeline.urlopen")
     def test_openrouter_error_includes_response_detail(self, urlopen: Mock) -> None:
         urlopen.side_effect = HTTPError(

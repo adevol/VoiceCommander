@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 import winsound
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from enum import Enum
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -89,11 +89,12 @@ class VoiceCommander:
         self._timer: threading.Timer | None = None
         self._menu_open = False
         self._settings_requested = threading.Event()
-        self._model_future = (
-            self.executor.submit(load_local_model, settings.local_asr_model)
-            if settings.asr_provider == "local"
-            else None
-        )
+        self._local_model = self._load_model(settings)
+
+    def _load_model(self, settings: Settings) -> Future[LoadedModel] | None:
+        if settings.asr_provider != "local":
+            return None
+        return self.executor.submit(load_local_model, settings.local_asr_model)
 
     def on_hotkey(self) -> None:
         with self._lock:
@@ -139,13 +140,9 @@ class VoiceCommander:
                     or updated.local_asr_model != previous.local_asr_model
                 )
                 if model_changed:
-                    if self._model_future is not None:
-                        self._model_future.cancel()
-                    self._model_future = (
-                        self.executor.submit(load_local_model, updated.local_asr_model)
-                        if updated.asr_provider == "local"
-                        else None
-                    )
+                    if self._local_model is not None:
+                        self._local_model.cancel()
+                    self._local_model = self._load_model(updated)
 
                 if updated.hotkey != previous.hotkey:
                     import keyboard
@@ -201,7 +198,7 @@ class VoiceCommander:
 
     def _finish(self, path: Path) -> None:
         try:
-            model = self._model_future.result() if self._model_future else None
+            model = self._local_model.result() if self._local_model else None
             key = get_api_key() if self.settings.uses_openrouter else ""
             complete_recording(path, self.settings, model, key)
             _beep(1100)
