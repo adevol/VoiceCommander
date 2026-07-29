@@ -15,11 +15,13 @@ Local transcription downloads the pinned, verified CPU-only `whisper.cpp`
 runtime once, then whichever model size you picked. Bigger is more accurate and
 slower:
 
-| Size | Download | |
-| --- | ---: | --- |
-| `base` | 57 MiB | The default. Quickest, and the least accurate. |
-| `small` | 181 MiB | Three times lighter than turbo and quicker with it; the middle ground. |
-| `large-v3-turbo` | 547 MiB | The most accurate on offer: minimal degradation versus full large-v3, at a fraction of its cost. |
+| Size | Download | Speed | |
+| --- | ---: | ---: | --- |
+| `base` | 57 MiB | ~15x | The default. Quickest, and the least accurate. |
+| `small` | 181 MiB | ~5x | Noticeably better than base and still far quicker than you can talk. |
+| `large-v3-turbo` | 547 MiB | ~1.2x | The most accurate on offer: minimal degradation versus full large-v3 |
+
+Speed is measured on an 8-thread Ryzen laptop CPU: ~5× means five seconds of audio transcribes in one second. Faster CPUs improve all models, especially large-v3-turbo.
 
 A size downloads only when you first select it, and is checked against a pinned
 SHA-256 before anything uses it. Switching sizes leaves the old file in place,

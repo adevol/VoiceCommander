@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -98,6 +99,8 @@ def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) 
                 str(path),
                 "-l",
                 settings.language.split("-", 1)[0].lower(),
+                "-t",
+                str(min(8, os.cpu_count() or 4)),
                 "-otxt",
                 "-of",
                 str(output_base),
