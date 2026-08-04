@@ -72,13 +72,43 @@ class EssentialTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("-l") + 1], "de")
 
+    @patch("voicecommander.pipeline._openrouter")
+    @patch("voicecommander.pipeline.subprocess.run")
+    def test_custom_vocabulary_reaches_every_model(self, run: Mock, openrouter: Mock) -> None:
+        run.return_value = Mock(returncode=0, stderr="")
+        openrouter.return_value = {"choices": [{"message": {"content": "Text"}}]}
+        settings = Settings(vocabulary="Kubernetes, VoiceCommander", postprocess_strength=50)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recording.wav"
+            path.write_bytes(b"RIFF")
+            # transcribe_local consumes its output file, so each call needs a fresh one.
+            transcript = Path(str(path) + ".whisper.txt")
+            transcript.write_text("Kubernetes", encoding="utf-8")
+            transcribe_local(path, settings, (Path("w.exe"), Path("m.bin")))
+            transcribe_openrouter(path, settings, "secret")
+            postprocess_openrouter("Raw", settings, "secret")
+
+            command = run.call_args.args[0]
+            # -p means --processors in whisper.cpp, so the long form is the only correct one.
+            self.assertNotIn("-p", command)
+            self.assertEqual(command[command.index("--prompt") + 1], "Kubernetes, VoiceCommander")
+            # Without this the prompt biases only the first 30 s of a 300 s recording.
+            self.assertIn("--carry-initial-prompt", command)
+            for call in openrouter.call_args_list:
+                self.assertIn("Kubernetes, VoiceCommander", str(call.args[2]["messages"]))
+
+            # An empty vocabulary must not pass a bare flag through to whisper.cpp.
+            transcript.write_text("Kubernetes", encoding="utf-8")
+            transcribe_local(path, Settings(), (Path("w.exe"), Path("m.bin")))
+        self.assertNotIn("--prompt", run.call_args.args[0])
+
     def test_settings_round_trip_without_secrets(self) -> None:
         settings = Settings(
             hotkey="f9",
             input_device='2: Mic "Main"',
             max_seconds=42,
             local_asr_model="small",
-            openrouter_asr_model="google/chirp-3",
+            openrouter_asr_model="xiaomi/mimo-v2.5",
             postprocess_style="professional",
             postprocess_strength=75,
         )
@@ -99,6 +129,8 @@ class EssentialTests(unittest.TestCase):
             validate(Settings(openrouter_asr_model="custom/transcriber"))
         with self.assertRaisesRegex(ValueError, "Invalid local ASR model"):
             validate(Settings(local_asr_model="tiny"))
+        with self.assertRaisesRegex(ValueError, "at most 500 characters"):
+            validate(Settings(vocabulary="x" * 501))
 
     def test_caption_noise_labels_are_dropped(self) -> None:
         self.assertTrue(is_speech("Hello there"))
@@ -175,21 +207,41 @@ class EssentialTests(unittest.TestCase):
         keyboard.is_pressed.assert_not_called()
 
     @patch("voicecommander.pipeline._openrouter")
-    def test_selected_openrouter_transcription_model_is_sent(self, openrouter: Mock) -> None:
-        openrouter.return_value = {"text": "Transcript"}
+    def test_openrouter_transcription_sends_audio_to_a_chat_model(self, openrouter: Mock) -> None:
+        openrouter.return_value = {"choices": [{"message": {"content": "Transcript"}}]}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
             path.write_bytes(b"RIFF")
             result = transcribe_openrouter(
                 path,
-                Settings(asr_provider="openrouter", openrouter_asr_model="google/chirp-3"),
+                Settings(
+                    asr_provider="openrouter",
+                    language="de-DE",
+                    openrouter_asr_model="google/gemini-2.5-flash",
+                ),
                 "secret",
             )
 
         self.assertEqual(result, "Transcript")
+        # OpenRouter has no /audio/transcriptions route; audio must ride on a chat message.
+        self.assertEqual(openrouter.call_args.args[0], "/chat/completions")
         payload = openrouter.call_args.args[2]
-        self.assertEqual(payload["model"], "google/chirp-3")
-        self.assertEqual(payload["language"], "en")
+        self.assertEqual(payload["model"], "google/gemini-2.5-flash")
+        self.assertEqual(payload["provider"], {"data_collection": "deny"})
+        parts = payload["messages"][0]["content"]
+        self.assertIn("de-DE", parts[0]["text"])
+        self.assertEqual(parts[1]["input_audio"], {"data": "UklGRg==", "format": "wav"})
+
+    @patch("voicecommander.pipeline.urlopen")
+    def test_connection_reset_is_retried_then_reported_cleanly(self, urlopen: Mock) -> None:
+        # ConnectionResetError is a sibling of URLError under OSError, so it escaped before.
+        urlopen.side_effect = ConnectionResetError(10054, "forcibly closed")
+        with (
+            self.assertRaisesRegex(RuntimeError, "OpenRouter could not be reached"),
+            self.assertLogs("voicecommander.pipeline", level="WARNING"),
+        ):
+            _openrouter("/chat/completions", "secret", {})
+        self.assertEqual(urlopen.call_count, 2)
 
     def test_zero_editing_strength_keeps_raw_transcript(self) -> None:
         with (

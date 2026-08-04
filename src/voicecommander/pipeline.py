@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .settings import APP_DIR, POSTPROCESS_STYLES, WHISPER_MODELS, WHISPER_REVISION, Settings
@@ -37,7 +37,7 @@ def _download(url: str, destination: Path, expected_sha256: str) -> None:
         if digest.hexdigest() != expected_sha256:
             raise RuntimeError(f"Downloaded file failed verification: {destination.name}")
         temporary.replace(destination)
-    except (HTTPError, URLError) as error:
+    except OSError as error:
         raise RuntimeError(f"Could not download {destination.name}: {error}") from error
     finally:
         temporary.unlink(missing_ok=True)
@@ -88,24 +88,26 @@ def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) 
     executable, model = loaded_model
     output_base = path.with_suffix(path.suffix + ".whisper")
     output_path = Path(str(output_base) + ".txt")
-    # ponytail: reloads 57 MiB per dictation; use the DLL if profiling shows startup lag.
+    command = [
+        str(executable),
+        "-m",
+        str(model),
+        "-f",
+        str(path),
+        "-l",
+        settings.language.split("-", 1)[0].lower(),
+        "-t",
+        str(min(8, os.cpu_count() or 4)),
+        "-otxt",
+        "-of",
+        str(output_base),
+        "-np",
+    ]
+    if settings.vocabulary:
+        command += ["--prompt", settings.vocabulary, "--carry-initial-prompt"]
     try:
         result = subprocess.run(
-            [
-                str(executable),
-                "-m",
-                str(model),
-                "-f",
-                str(path),
-                "-l",
-                settings.language.split("-", 1)[0].lower(),
-                "-t",
-                str(min(8, os.cpu_count() or 4)),
-                "-otxt",
-                "-of",
-                str(output_base),
-                "-np",
-            ],
+            command,
             capture_output=True,
             text=True,
             timeout=max(300, settings.max_seconds * 4),
@@ -131,30 +133,67 @@ def _openrouter(path: str, api_key: str, payload: dict[str, Any]) -> dict[str, A
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
+    # Uploading audio resets the connection now and then. URLError and a bare
+    # ConnectionResetError are siblings under OSError, so catch the parent and retry once.
+    last: OSError | None = None
+    for _ in range(2):
+        try:
+            with urlopen(request, timeout=300) as response:
+                return json.load(response)
+        except HTTPError as error:
+            detail = error.read(200).decode("utf-8", errors="replace").strip()
+            message = f"OpenRouter returned HTTP {error.code}{f': {detail}' if detail else ''}"
+            logger.error(message)
+            raise RuntimeError(message) from error
+        except OSError as error:
+            last = error
+            logger.warning("OpenRouter connection failed: %s", error)
+    logger.error("OpenRouter request failed twice: %s", last)
+    raise RuntimeError(f"OpenRouter could not be reached: {last}") from last
+
+
+def _message_text(response: dict[str, Any], what: str) -> str:
     try:
-        with urlopen(request, timeout=300) as response:
-            return json.load(response)
-    except HTTPError as error:
-        detail = error.read(200).decode("utf-8", errors="replace").strip()
-        message = f"OpenRouter returned HTTP {error.code}{f': {detail}' if detail else ''}"
-        logger.error(message)
-        raise RuntimeError(message) from error
-    except URLError as error:
-        logger.error("OpenRouter request failed: %s", error.reason)
-        raise RuntimeError("OpenRouter could not be reached") from error
+        text = response["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError, AttributeError) as error:
+        raise RuntimeError(f"OpenRouter returned an invalid {what} response") from error
+    if not text:
+        raise RuntimeError(f"OpenRouter returned an empty {what}")
+    return text
+
+
+def _vocabulary_hint(vocabulary: str) -> str:
+    # Naming the terms up front is what stops a decoder mangling jargon into common words.
+    return f" These words may appear and are spelled like this: {vocabulary}." if vocabulary else ""
 
 
 def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
     payload = {
         "model": settings.openrouter_asr_model,
-        "language": settings.language.split("-", 1)[0],
-        "input_audio": {"data": base64.b64encode(path.read_bytes()).decode("ascii"), "format": "wav"},
-        "provider": {"data_collection": "deny", "zdr": True},
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Transcribe this {settings.language} audio verbatim."
+                        " Reply with the transcript only, with no commentary."
+                        + _vocabulary_hint(settings.vocabulary),
+                    },
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+                            "format": "wav",
+                        },
+                    },
+                ],
+            }
+        ],
+        "temperature": 0,
+        "provider": {"data_collection": "deny"},
     }
-    text = str(_openrouter("/audio/transcriptions", api_key, payload).get("text", "")).strip()
-    if not text:
-        raise RuntimeError("OpenRouter returned an empty transcript")
-    return text
+    return _message_text(_openrouter("/chat/completions", api_key, payload), "transcript")
 
 
 def transcribe(path: Path, settings: Settings, loaded_model: LoadedModel | None, api_key: str) -> str:
@@ -187,6 +226,9 @@ def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
         f"Write numbers, dates, and times naturally for the {settings.language} locale.",
         "Return only the finished text.",
     ]
+    if settings.vocabulary:
+        # Without this the editor helpfully "corrects" the jargon the ASR just got right.
+        rules.insert(2, f"Keep these terms exactly as spelled here: {settings.vocabulary}")
     prompt = "\n".join(rules)
     payload = {
         "model": settings.postprocess_model,
@@ -195,16 +237,9 @@ def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
             {"role": "user", "content": text},
         ],
         "temperature": 0,
-        "provider": {"data_collection": "deny", "zdr": True},
+        "provider": {"data_collection": "deny"},
     }
-    response = _openrouter("/chat/completions", api_key, payload)
-    try:
-        result = response["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, AttributeError) as error:
-        raise RuntimeError("OpenRouter returned an invalid post-processing response") from error
-    if not result:
-        raise RuntimeError("OpenRouter returned empty post-processed text")
-    return result
+    return _message_text(_openrouter("/chat/completions", api_key, payload), "post-processed text")
 
 
 def run_pipeline(

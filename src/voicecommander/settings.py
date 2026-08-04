@@ -35,18 +35,13 @@ LANGUAGES = {
     "Spanish": "es-ES",
 }
 OPENROUTER_ASR_MODELS = (
-    "deepgram/nova-3",
-    "google/chirp-3",
-    "microsoft/mai-transcribe-1.5",
-    "mistralai/voxtral-mini-transcribe",
-    "nvidia/parakeet-tdt-0.6b-v3",
-    "openai/gpt-4o-mini-transcribe",
-    "openai/gpt-4o-transcribe",
-    "openai/whisper-1",
-    "openai/whisper-large-v3",
-    "openai/whisper-large-v3-turbo",
-    "qwen/qwen3-asr-flash-2026-02-10",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.5-flash-lite",
+    "google/gemini-3.5-flash-lite",
+    "openai/gpt-audio-mini",
+    "xiaomi/mimo-v2.5",
 )
+VOCABULARY_LIMIT = 500
 POSTPROCESS_STYLES = {
     "faithful": "Keep the speaker's wording and sentence order wherever possible.",
     "clean": "Remove false starts and repetition, and improve readability.",
@@ -59,11 +54,12 @@ POSTPROCESS_STYLES = {
 class Settings:
     hotkey: str = "f8"
     language: str = "en-US"
+    vocabulary: str = ""
     input_device: str = ""
     max_seconds: int = 300
     asr_provider: str = "local"
     local_asr_model: str = "base"
-    openrouter_asr_model: str = "openai/whisper-large-v3"
+    openrouter_asr_model: str = "google/gemini-2.5-flash"
     postprocess_model: str = "openai/gpt-4o-mini"
     postprocess_style: str = "clean"
     postprocess_strength: int = 0
@@ -86,6 +82,8 @@ def validate(settings: Settings) -> None:
         raise ValueError("Recording limit must be between 1 and 3600 seconds")
     if settings.language not in LANGUAGES.values():
         raise ValueError("Invalid language")
+    if len(settings.vocabulary) > VOCABULARY_LIMIT:
+        raise ValueError(f"Custom vocabulary must be at most {VOCABULARY_LIMIT} characters")
     if settings.asr_provider not in ASR_PROVIDERS:
         raise ValueError("Invalid ASR provider")
     if settings.local_asr_model not in LOCAL_ASR_MODELS:
@@ -176,6 +174,7 @@ def show_settings(settings: Settings) -> Settings | None:
     rows = [
         ("Hotkey", "hotkey", None),
         ("Language", "language", tuple(LANGUAGES)),
+        ("Custom vocabulary", "vocabulary", None),
         ("Microphone", "input_device", _microphones()),
         ("Recording limit (seconds)", "max_seconds", None),
         ("ASR provider", "asr_provider", ASR_PROVIDERS),

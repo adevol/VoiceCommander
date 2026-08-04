@@ -35,6 +35,12 @@ with that same hotkey (Ctrl+F8 by default) to open the full settings window.
 Saved changes, including the hotkey, microphone, and speech model, take effect
 immediately.
 
+If you keep dictating names, jargon, or product names that come back mangled,
+put them in the **Custom vocabulary** box in settings, comma-separated:
+`Kubernetes, Postgres, Aleksandr`. Those spellings are handed to whichever
+model is transcribing, and to the editing model so it does not undo them. Up
+to 500 characters — a short list biases harder than a long one.
+
 The editing-strength slider controls post-processing: at 0 it is off and your
 words come back exactly as you spoke them; anything above 0 sends the
 transcript text (never the audio) to the model you picked on OpenRouter, so it
