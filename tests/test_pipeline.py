@@ -41,7 +41,6 @@ class EssentialTests(unittest.TestCase):
         for name, (filename, expected_sha256) in WHISPER_MODELS.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
                 whisper_dir = Path(directory)
-                # Pretend the runtime is already unpacked so only the model download runs.
                 (whisper_dir / "whisper-cli.exe").touch()
                 (whisper_dir / f".runtime-{WHISPER_RUNTIME_SHA256}").touch()
                 download.reset_mock()
@@ -81,7 +80,6 @@ class EssentialTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
             path.write_bytes(b"RIFF")
-            # transcribe_local consumes its output file, so each call needs a fresh one.
             transcript = Path(str(path) + ".whisper.txt")
             transcript.write_text("Kubernetes", encoding="utf-8")
             transcribe_local(path, settings, (Path("w.exe"), Path("m.bin")))
@@ -89,15 +87,16 @@ class EssentialTests(unittest.TestCase):
             postprocess_openrouter("Raw", settings, "secret")
 
             command = run.call_args.args[0]
-            # -p means --processors in whisper.cpp, so the long form is the only correct one.
-            self.assertNotIn("-p", command)
+            self.assertNotIn("-p", command, "whisper.cpp reads -p as --processors")
             self.assertEqual(command[command.index("--prompt") + 1], "Kubernetes, VoiceCommander")
-            # Without this the prompt biases only the first 30 s of a 300 s recording.
-            self.assertIn("--carry-initial-prompt", command)
+            self.assertIn(
+                "--carry-initial-prompt",
+                command,
+                "without it the prompt biases only the first 30 s of a recording",
+            )
             for call in openrouter.call_args_list:
                 self.assertIn("Kubernetes, VoiceCommander", str(call.args[2]["messages"]))
 
-            # An empty vocabulary must not pass a bare flag through to whisper.cpp.
             transcript.write_text("Kubernetes", encoding="utf-8")
             transcribe_local(path, Settings(), (Path("w.exe"), Path("m.bin")))
         self.assertNotIn("--prompt", run.call_args.args[0])
@@ -193,7 +192,7 @@ class EssentialTests(unittest.TestCase):
         self, recorder_type: Mock, executor_type: Mock, timer: Mock, ctrl_pressed: Mock
     ) -> None:
         keyboard = Mock()
-        keyboard.is_pressed.return_value = True  # The library's cached state may be stale.
+        keyboard.is_pressed.return_value = True
         app = VoiceCommander(Settings(asr_provider="openrouter"))
         app._register_hotkeys(keyboard)
         callback = keyboard.add_hotkey.call_args_list[0].args[1]
@@ -223,8 +222,11 @@ class EssentialTests(unittest.TestCase):
             )
 
         self.assertEqual(result, "Transcript")
-        # OpenRouter has no /audio/transcriptions route; audio must ride on a chat message.
-        self.assertEqual(openrouter.call_args.args[0], "/chat/completions")
+        self.assertEqual(
+            openrouter.call_args.args[0],
+            "/chat/completions",
+            "OpenRouter has no /audio/transcriptions route",
+        )
         payload = openrouter.call_args.args[2]
         self.assertEqual(payload["model"], "google/gemini-2.5-flash")
         self.assertEqual(payload["provider"], {"data_collection": "deny"})
@@ -234,7 +236,6 @@ class EssentialTests(unittest.TestCase):
 
     @patch("voicecommander.pipeline.urlopen")
     def test_connection_reset_is_retried_then_reported_cleanly(self, urlopen: Mock) -> None:
-        # ConnectionResetError is a sibling of URLError under OSError, so it escaped before.
         urlopen.side_effect = ConnectionResetError(10054, "forcibly closed")
         with (
             self.assertRaisesRegex(RuntimeError, "OpenRouter could not be reached"),

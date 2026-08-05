@@ -1,12 +1,12 @@
+"""PyInstaller build definition."""
+
 from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ["src/voicecommander/__main__.py"],
     pathex=["src"],
-    # soundcard loads its cffi header definitions from package data at runtime.
     datas=collect_data_files("soundcard"),
     hiddenimports=["keyring.backends.Windows"],
-    # numpy stays in: soundcard needs it for the captions loopback capture.
     excludes=["librosa", "llvmlite", "numba", "scipy", "sklearn", "torch", "transformers"],
 )
 pyz = PYZ(a.pure)

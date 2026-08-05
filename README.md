@@ -23,6 +23,10 @@ slower:
 
 Speed is measured on an 8-thread Ryzen laptop CPU: ~5× means five seconds of audio transcribes in one second. Faster CPUs improve all models, especially large-v3-turbo.
 
+There is no `medium` on purpose. At 514 MiB it is 33 MiB smaller than
+`large-v3-turbo` while being both slower and less accurate, so there is no
+situation in which it is the one you want.
+
 A size downloads only when you first select it, and is checked against a pinned
 SHA-256 before anything uses it. Switching sizes leaves the old file in place,
 so switching back is instant.

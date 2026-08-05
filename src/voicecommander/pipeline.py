@@ -44,6 +44,18 @@ def _download(url: str, destination: Path, expected_sha256: str) -> None:
 
 
 def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path]:
+    """Return the whisper.cpp runtime and model, downloading either if absent.
+
+    Args:
+        local_asr_model: A key of `WHISPER_MODELS`.
+
+    Returns:
+        The paths to the `whisper-cli` executable and the model file.
+
+    Raises:
+        RuntimeError: If a download fails verification or the runtime archive is
+            missing files.
+    """
     WHISPER_DIR.mkdir(parents=True, exist_ok=True)
     executable = WHISPER_DIR / "whisper-cli.exe"
     runtime_marker = WHISPER_DIR / f".runtime-{WHISPER_RUNTIME_SHA256}"
@@ -66,8 +78,6 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path]:
             raise RuntimeError("The whisper.cpp runtime archive was incomplete")
         runtime_marker.touch()
 
-    # Each size has its own filename, and _download only publishes a verified file,
-    # so the name on disk is enough to tell what is already there.
     filename, expected_sha256 = WHISPER_MODELS[local_asr_model]
     model = WHISPER_DIR / filename
     if not model.exists():
@@ -85,6 +95,20 @@ def load_local_model(local_asr_model: str = "base") -> LoadedModel:
 
 
 def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) -> str:
+    """Transcribe a WAV file with whisper.cpp.
+
+    Args:
+        path: The WAV file to transcribe.
+        settings: Supplies the language, custom vocabulary, and recording limit that
+            sets the subprocess timeout.
+        loaded_model: The executable and model paths from `load_local_model`.
+
+    Returns:
+        The transcript, stripped of surrounding whitespace.
+
+    Raises:
+        RuntimeError: If whisper.cpp exits non-zero or returns an empty transcript.
+    """
     executable, model = loaded_model
     output_base = path.with_suffix(path.suffix + ".whisper")
     output_path = Path(str(output_base) + ".txt")
@@ -125,6 +149,20 @@ def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) 
 
 
 def _openrouter(path: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """POST a payload to OpenRouter.
+
+    Args:
+        path: The route to call, appended to `OPENROUTER_URL`.
+        api_key: The OpenRouter key.
+        payload: The request body, serialised as JSON.
+
+    Returns:
+        The decoded JSON response.
+
+    Raises:
+        RuntimeError: If the key is missing, the response is an HTTP error, or the
+            connection fails on both attempts.
+    """
     if not api_key:
         raise RuntimeError("OpenRouter is selected but no API key is configured")
     request = Request(
@@ -133,8 +171,6 @@ def _openrouter(path: str, api_key: str, payload: dict[str, Any]) -> dict[str, A
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
-    # Uploading audio resets the connection now and then. URLError and a bare
-    # ConnectionResetError are siblings under OSError, so catch the parent and retry once.
     last: OSError | None = None
     for _ in range(2):
         try:
@@ -163,11 +199,23 @@ def _message_text(response: dict[str, Any], what: str) -> str:
 
 
 def _vocabulary_hint(vocabulary: str) -> str:
-    # Naming the terms up front is what stops a decoder mangling jargon into common words.
     return f" These words may appear and are spelled like this: {vocabulary}." if vocabulary else ""
 
 
 def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
+    """Transcribe a WAV file with an OpenRouter model.
+
+    Args:
+        path: The WAV file to transcribe.
+        settings: Supplies the model, language, and custom vocabulary.
+        api_key: The OpenRouter key.
+
+    Returns:
+        The transcript, stripped of surrounding whitespace.
+
+    Raises:
+        RuntimeError: If the request fails or the reply holds no usable text.
+    """
     payload = {
         "model": settings.openrouter_asr_model,
         "messages": [
@@ -205,7 +253,14 @@ def transcribe(path: Path, settings: Settings, loaded_model: LoadedModel | None,
 
 
 def _strength_instruction(strength: int) -> str:
-    # Models follow these categories far more reliably than a numeric dial.
+    """Turn the editing-strength slider into an instruction.
+
+    Args:
+        strength: The slider position, from 0 to 100.
+
+    Returns:
+        One of three instructions, for light, moderate, or free editing.
+    """
     if strength <= 25:
         return "Only fix punctuation and obvious mis-hearings; keep the wording exactly as spoken."
     if strength <= 75:
@@ -214,6 +269,20 @@ def _strength_instruction(strength: int) -> str:
 
 
 def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
+    """Edit a transcript with an OpenRouter model.
+
+    Args:
+        text: The raw transcript.
+        settings: Supplies the model, editing strength, style, language, and custom
+            vocabulary.
+        api_key: The OpenRouter key.
+
+    Returns:
+        The edited text.
+
+    Raises:
+        RuntimeError: If the request fails or the reply holds no usable text.
+    """
     rules = [
         "Edit this dictated text without changing its meaning or adding information.",
         _strength_instruction(settings.postprocess_strength),
@@ -227,7 +296,6 @@ def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
         "Return only the finished text.",
     ]
     if settings.vocabulary:
-        # Without this the editor helpfully "corrects" the jargon the ASR just got right.
         rules.insert(2, f"Keep these terms exactly as spelled here: {settings.vocabulary}")
     prompt = "\n".join(rules)
     payload = {

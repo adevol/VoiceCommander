@@ -1,3 +1,11 @@
+"""Live captions for whatever the machine is playing, via speaker loopback.
+
+Attributes:
+    CHUNK_SECONDS: Seconds of audio per transcribed block.
+    BLOCK_SECONDS: Seconds of audio per read from the loopback device.
+    SILENCE_PEAK: Peak amplitude below which a chunk counts as silence.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -11,22 +19,33 @@ from .settings import Settings
 
 logger = logging.getLogger(__name__)
 
-# ponytail: fixed chunks split words at the boundary; add ~1 s overlap or
-# silence-based chunking if captions read badly.
 CHUNK_SECONDS = 8
 BLOCK_SECONDS = 0.25
 SILENCE_PEAK = 0.005
 
 
 def _put_latest(items: queue.Queue, item: object) -> None:
-    # _capture is the only producer, so the slot cannot refill between the drain and the put.
+    """Replace the contents of a one-slot queue, dropping any backlog.
+
+    Args:
+        items: The one-slot queue to overwrite.
+        item: The value to leave in it.
+    """
     with suppress(queue.Empty):
         items.get_nowait()
     items.put_nowait(item)
 
 
 def is_speech(text: str) -> bool:
-    # Whisper labels non-speech as "[BLANK_AUDIO]", "(music)", and similar.
+    """Report whether a transcript is speech rather than a non-speech label.
+
+    Args:
+        text: A transcript from Whisper.
+
+    Returns:
+        True if the text looks like speech, and False for the bracketed or
+        parenthesised labels Whisper gives non-speech audio.
+    """
     return bool(text) and not (
         (text.startswith("[") and text.endswith("]"))
         or (text.startswith("(") and text.endswith(")"))
@@ -34,7 +53,14 @@ def is_speech(text: str) -> bool:
 
 
 def _capture(chunks: queue.Queue, lines: queue.Queue, stop: threading.Event) -> None:
-    # soundcard initializes COM, so keep every call on this one thread.
+    """Record speaker loopback into `chunks` until `stop` is set.
+
+    Args:
+        chunks: Receives one mono block of about `CHUNK_SECONDS`, replacing any the
+            transcriber has not collected yet.
+        lines: Receives a message for the caption window if capture fails.
+        stop: Ends the loop when set, and is set here on failure.
+    """
     try:
         import numpy
         import soundcard
@@ -58,11 +84,17 @@ def _capture(chunks: queue.Queue, lines: queue.Queue, stop: threading.Event) -> 
 def _transcribe(
     chunks: queue.Queue, lines: queue.Queue, settings: Settings, stop: threading.Event
 ) -> None:
+    """Transcribe chunks into `lines` until `stop` is set.
+
+    Args:
+        chunks: Supplies mono audio blocks from `_capture`.
+        lines: Receives each caption line, and any failure message.
+        settings: Supplies the language.
+        stop: Ends the loop when set, and is set here if the model cannot load.
+    """
     import numpy
 
     try:
-        # ponytail: pinned to the smallest size regardless of the dictation setting, because
-        # every chunk reloads the model; revisit together with a resident whisper-server.
         model = load_local_model("base")
     except Exception as error:
         logger.exception("Could not load Whisper for captions")
@@ -76,7 +108,7 @@ def _transcribe(
             chunk = chunks.get(timeout=0.5)
         except queue.Empty:
             continue
-        if numpy.abs(chunk).max() < SILENCE_PEAK:  # Whisper hallucinates on silence.
+        if numpy.abs(chunk).max() < SILENCE_PEAK:
             continue
         path = write_wav((numpy.clip(chunk, -1, 1) * 32767).astype(numpy.int16).tobytes())
         try:

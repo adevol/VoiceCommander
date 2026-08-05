@@ -27,6 +27,13 @@ def write_wav(data: bytes) -> Path:
 
 
 class Recorder:
+    """Records the microphone to a WAV file between `start` and `stop`.
+
+    Attributes:
+        input_device: An "index: name" entry from `settings._microphones`, of which
+            only the leading index is used, or empty for the system default.
+    """
+
     def __init__(self, input_device: str = "") -> None:
         self.input_device = input_device
         self._chunks: list[bytes] = []
@@ -34,12 +41,16 @@ class Recorder:
         self._lock = Lock()
 
     def start(self) -> None:
+        """Open the input stream and start buffering audio.
+
+        Raises:
+            RuntimeError: If a recording is already active.
+        """
         import sounddevice
 
         device = None
         if self.input_device:
             try:
-                # _microphones formats selections as "index: name".
                 device = int(self.input_device.split(":", 1)[0])
             except ValueError:
                 device = self.input_device
