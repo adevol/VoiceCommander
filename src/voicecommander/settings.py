@@ -60,6 +60,7 @@ POSTPROCESS_STYLES = {
 @dataclass(frozen=True, slots=True)
 class Settings:
     hotkey: str = "f8"
+    markdown_hotkey: str = "f7"
     language: str = "en-US"
     vocabulary: str = ""
     input_device: str = ""
@@ -83,8 +84,15 @@ def validate(settings: Settings) -> None:
             raise ValueError(f"Setting '{field.name}' has an invalid type")
     if not settings.hotkey.strip():
         raise ValueError("Hotkey is required")
-    if "ctrl" in settings.hotkey.lower() or "control" in settings.hotkey.lower():
-        raise ValueError("The recording hotkey cannot use Ctrl because Ctrl+hotkey opens the menu")
+    if not settings.markdown_hotkey.strip():
+        raise ValueError("Markdown hotkey is required")
+    if settings.hotkey.casefold() == settings.markdown_hotkey.casefold():
+        raise ValueError("Recording and Markdown hotkeys must be different")
+    for name, hotkey in (("recording", settings.hotkey), ("Markdown", settings.markdown_hotkey)):
+        if "ctrl" in hotkey.lower() or "control" in hotkey.lower():
+            raise ValueError(
+                f"The {name} hotkey cannot use Ctrl because Ctrl+recording hotkey opens the menu"
+            )
     if not 1 <= settings.max_seconds <= 3600:
         raise ValueError("Recording limit must be between 1 and 3600 seconds")
     if settings.language not in LANGUAGES.values():
@@ -185,7 +193,8 @@ def show_settings(settings: Settings) -> Settings | None:
     result: Settings | None = None
 
     rows = [
-        ("Hotkey", "hotkey", None),
+        ("Normal hotkey", "hotkey", None),
+        ("Markdown hotkey", "markdown_hotkey", None),
         ("Language", "language", tuple(LANGUAGES)),
         ("Custom vocabulary", "vocabulary", None),
         ("Microphone", "input_device", _microphones()),

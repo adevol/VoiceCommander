@@ -104,6 +104,7 @@ class EssentialTests(unittest.TestCase):
     def test_settings_round_trip_without_secrets(self) -> None:
         settings = Settings(
             hotkey="f9",
+            markdown_hotkey="f6",
             input_device='2: Mic "Main"',
             max_seconds=42,
             local_asr_model="small",
@@ -130,6 +131,8 @@ class EssentialTests(unittest.TestCase):
             validate(Settings(local_asr_model="tiny"))
         with self.assertRaisesRegex(ValueError, "at most 500 characters"):
             validate(Settings(vocabulary="x" * 501))
+        with self.assertRaisesRegex(ValueError, "hotkeys must be different"):
+            validate(Settings(hotkey="F8", markdown_hotkey="f8"))
 
     def test_caption_noise_labels_are_dropped(self) -> None:
         self.assertTrue(is_speech("Hello there"))
@@ -183,6 +186,56 @@ class EssentialTests(unittest.TestCase):
         self.assertIn("professional prose", prompt)
         self.assertIn("scratch that", prompt)
         self.assertIn("language of the dictated text", prompt)
+
+    @patch("voicecommander.pipeline._openrouter")
+    def test_markdown_mode_requests_structure_and_latex(self, openrouter: Mock) -> None:
+        openrouter.return_value = {"choices": [{"message": {"content": "## Result"}}]}
+
+        result = postprocess_openrouter("Describe a heading", Settings(), "secret", markdown=True)
+
+        self.assertEqual(result, "## Result")
+        prompt = openrouter.call_args.args[2]["messages"][0]["content"]
+        self.assertIn("finished Markdown", prompt)
+        self.assertIn("$...$", prompt)
+        self.assertIn("$$...$$", prompt)
+        self.assertIn("without commentary", prompt)
+
+    def test_markdown_mode_postprocesses_even_when_editing_is_off(self) -> None:
+        with (
+            patch("voicecommander.pipeline.transcribe", return_value="raw description"),
+            patch(
+                "voicecommander.pipeline.postprocess_openrouter",
+                return_value="# Finished",
+            ) as postprocess,
+        ):
+            result = run_pipeline(
+                Path("recording.wav"),
+                Settings(postprocess_strength=0),
+                None,
+                "secret",
+                markdown=True,
+            )
+        self.assertEqual(result, "# Finished")
+        postprocess.assert_called_once_with(
+            "raw description", Settings(postprocess_strength=0), "secret", markdown=True
+        )
+
+    def test_markdown_mode_does_not_paste_raw_instructions_on_failure(self) -> None:
+        with (
+            patch("voicecommander.pipeline.transcribe", return_value="raw description"),
+            patch(
+                "voicecommander.pipeline.postprocess_openrouter",
+                side_effect=RuntimeError("cloud unavailable"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "cloud unavailable"),
+        ):
+            run_pipeline(
+                Path("recording.wav"),
+                Settings(postprocess_strength=0),
+                None,
+                "secret",
+                markdown=True,
+            )
 
     @patch("voicecommander.app._ctrl_pressed", return_value=False)
     @patch("voicecommander.app.threading.Timer")
@@ -304,6 +357,27 @@ class EssentialTests(unittest.TestCase):
         executor.submit.assert_called_once()
         timer.return_value.start.assert_called_once()
 
+    @patch("voicecommander.app._ctrl_pressed", return_value=False)
+    @patch("voicecommander.app.threading.Timer")
+    @patch("voicecommander.app.ThreadPoolExecutor")
+    @patch("voicecommander.app.Recorder")
+    def test_markdown_hotkey_marks_the_recording_for_markdown(
+        self, recorder_type: Mock, executor_type: Mock, timer: Mock, ctrl_pressed: Mock
+    ) -> None:
+        keyboard = Mock()
+        recorder_type.return_value.stop.return_value = Path("recording.wav")
+        app = VoiceCommander(Settings(asr_provider="openrouter"))
+        app._register_hotkeys(keyboard)
+        markdown_callback = keyboard.add_hotkey.call_args_list[1].args[1]
+
+        markdown_callback()
+        markdown_callback()
+
+        executor_type.return_value.submit.assert_called_once_with(
+            app._finish, Path("recording.wav"), True
+        )
+        ctrl_pressed.assert_called()
+
     def test_settings_hotkey_applies_runtime_changes(self) -> None:
         keyboard = Mock()
         with (
@@ -319,6 +393,7 @@ class EssentialTests(unittest.TestCase):
             updated = Settings(
                 asr_provider="openrouter",
                 hotkey="f10",
+                markdown_hotkey="f6",
                 input_device="3: Microphone",
             )
             show_settings.return_value = updated
@@ -327,7 +402,7 @@ class EssentialTests(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in keyboard.add_hotkey.call_args_list],
-            ["f9", "ctrl+f9", "f10", "ctrl+f10"],
+            ["f9", "f7", "ctrl+f9", "f10", "f6", "ctrl+f10"],
         )
         show_settings.assert_called_once_with(initial)
         recorder_type.assert_called_with("3: Microphone")

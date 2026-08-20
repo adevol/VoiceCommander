@@ -56,8 +56,9 @@ def complete_recording(
     settings: Settings,
     loaded_model: LoadedModel | None,
     api_key: str,
+    markdown: bool = False,
 ) -> str:
-    text = run_pipeline(path, settings, loaded_model, api_key)
+    text = run_pipeline(path, settings, loaded_model, api_key, markdown=markdown)
     deliver_text(text)
     try:
         path.unlink()
@@ -88,6 +89,7 @@ class VoiceCommander:
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
         self._menu_open = False
+        self._markdown = False
         self._settings_requested = threading.Event()
         self._local_model = self._load_model(settings)
 
@@ -96,7 +98,7 @@ class VoiceCommander:
             return None
         return self.executor.submit(load_local_model, settings.local_asr_model)
 
-    def on_hotkey(self) -> None:
+    def on_hotkey(self, markdown: bool = False) -> None:
         with self._lock:
             if self._menu_open:
                 return
@@ -104,7 +106,7 @@ class VoiceCommander:
                 logger.info("Ignoring hotkey while processing")
                 return
             if self.state is State.IDLE:
-                self._start_recording()
+                self._start_recording(markdown)
             else:
                 self._stop_recording()
 
@@ -117,6 +119,10 @@ class VoiceCommander:
         keyboard.add_hotkey(
             self.settings.hotkey,
             lambda: None if _ctrl_pressed() else self.on_hotkey(),
+        )
+        keyboard.add_hotkey(
+            self.settings.markdown_hotkey,
+            lambda: None if _ctrl_pressed() else self.on_hotkey(markdown=True),
         )
         keyboard.add_hotkey(f"ctrl+{self.settings.hotkey}", self.request_settings)
 
@@ -144,7 +150,10 @@ class VoiceCommander:
                         self._local_model.cancel()
                     self._local_model = self._load_model(updated)
 
-                if updated.hotkey != previous.hotkey:
+                if (
+                    updated.hotkey != previous.hotkey
+                    or updated.markdown_hotkey != previous.markdown_hotkey
+                ):
                     import keyboard
 
                     keyboard.unhook_all_hotkeys()
@@ -160,7 +169,7 @@ class VoiceCommander:
             with self._lock:
                 self._menu_open = False
 
-    def _start_recording(self) -> None:
+    def _start_recording(self, markdown: bool = False) -> None:
         try:
             self.recorder.start()
         except Exception as error:
@@ -168,10 +177,11 @@ class VoiceCommander:
             _notify("VoiceCommander", str(error), error=True)
             return
         self.state = State.RECORDING
+        self._markdown = markdown
         self._timer = threading.Timer(self.settings.max_seconds, self._recording_limit)
         self._timer.daemon = True
         self._timer.start()
-        logger.info("Recording started")
+        logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
         _beep(900)
 
     def _stop_recording(self) -> None:
@@ -181,7 +191,7 @@ class VoiceCommander:
             self._timer = None
         try:
             path = self.recorder.stop()
-            self.executor.submit(self._finish, path)
+            self.executor.submit(self._finish, path, self._markdown)
         except Exception as error:
             self.state = State.IDLE
             logger.exception("Could not stop recording")
@@ -196,11 +206,11 @@ class VoiceCommander:
                 logger.info("Recording limit reached")
                 self._stop_recording()
 
-    def _finish(self, path: Path) -> None:
+    def _finish(self, path: Path, markdown: bool = False) -> None:
         try:
             model = self._local_model.result() if self._local_model else None
-            key = get_api_key() if self.settings.uses_openrouter else ""
-            complete_recording(path, self.settings, model, key)
+            key = get_api_key() if self.settings.uses_openrouter or markdown else ""
+            complete_recording(path, self.settings, model, key, markdown=markdown)
             _beep(1100)
         except Exception as error:
             logger.exception("Pipeline failed; recording preserved at %s", path)
@@ -208,13 +218,15 @@ class VoiceCommander:
         finally:
             with self._lock:
                 self.state = State.IDLE
+                self._markdown = False
 
     def run(self) -> int:
         import keyboard
 
         logger.info(
-            "Starting VoiceCommander: hotkey=%s asr=%s postprocess_strength=%s",
+            "Starting VoiceCommander: hotkey=%s markdown_hotkey=%s asr=%s postprocess_strength=%s",
             self.settings.hotkey,
+            self.settings.markdown_hotkey,
             self.settings.asr_provider,
             self.settings.postprocess_strength,
         )

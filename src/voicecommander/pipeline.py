@@ -268,7 +268,12 @@ def _strength_instruction(strength: int) -> str:
     return "Rewrite freely for clarity while preserving the meaning."
 
 
-def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
+def postprocess_openrouter(
+    text: str,
+    settings: Settings,
+    api_key: str,
+    markdown: bool = False,
+) -> str:
     """Edit a transcript with an OpenRouter model.
 
     Args:
@@ -276,6 +281,8 @@ def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
         settings: Supplies the model, editing strength, style, language, and custom
             vocabulary.
         api_key: The OpenRouter key.
+        markdown: Whether to turn the dictation into finished Markdown rather than
+            lightly editing it as prose.
 
     Returns:
         The edited text.
@@ -283,18 +290,37 @@ def postprocess_openrouter(text: str, settings: Settings, api_key: str) -> str:
     Raises:
         RuntimeError: If the request fails or the reply holds no usable text.
     """
-    rules = [
-        "Edit this dictated text without changing its meaning or adding information.",
-        _strength_instruction(settings.postprocess_strength),
-        f"Style: {POSTPROCESS_STYLES[settings.postprocess_style]}",
-        "Reply in the language of the dictated text.",
-        'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
-        " or restarts a phrase, keep only the corrected version and never write the command itself.",
-        'Convert spoken commands ("new paragraph", "bullet point", "quote ... unquote") and'
-        " formatting cues into paragraphs, bullets, numbered lists, and punctuation.",
-        f"Write numbers, dates, and times naturally for the {settings.language} locale.",
-        "Return only the finished text.",
-    ]
+    if markdown:
+        rules = [
+            "Turn this dictated description into the finished Markdown content the speaker intends;"
+            " do not merely transcribe the description.",
+            "Use valid, conventional Markdown with paragraphs, headings, lists, blockquotes, tables,"
+            " and code blocks when the requested content calls for them.",
+            "Interpret spoken layout and hierarchy instructions instead of including those instructions"
+            " in the result.",
+            "Format mathematical expressions as LaTeX: use $...$ for inline math and $$...$$ for"
+            " display math.",
+            "Preserve the speaker's meaning and supplied facts; do not invent content.",
+            f"Style: {POSTPROCESS_STYLES[settings.postprocess_style]}",
+            "Reply in the language of the dictated text.",
+            'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
+            " or restarts a phrase, keep only the corrected version and never write the command itself.",
+            f"Write numbers, dates, and times naturally for the {settings.language} locale.",
+            "Return only raw Markdown, without commentary or an outer Markdown code fence.",
+        ]
+    else:
+        rules = [
+            "Edit this dictated text without changing its meaning or adding information.",
+            _strength_instruction(settings.postprocess_strength),
+            f"Style: {POSTPROCESS_STYLES[settings.postprocess_style]}",
+            "Reply in the language of the dictated text.",
+            'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
+            " or restarts a phrase, keep only the corrected version and never write the command itself.",
+            'Convert spoken commands ("new paragraph", "bullet point", "quote ... unquote") and'
+            " formatting cues into paragraphs, bullets, numbered lists, and punctuation.",
+            f"Write numbers, dates, and times naturally for the {settings.language} locale.",
+            "Return only the finished text.",
+        ]
     if settings.vocabulary:
         rules.insert(2, f"Keep these terms exactly as spelled here: {settings.vocabulary}")
     prompt = "\n".join(rules)
@@ -315,8 +341,11 @@ def run_pipeline(
     settings: Settings,
     loaded_model: LoadedModel | None,
     api_key: str,
+    markdown: bool = False,
 ) -> str:
     raw = transcribe(path, settings, loaded_model, api_key)
+    if markdown:
+        return postprocess_openrouter(raw, settings, api_key, markdown=True)
     if settings.postprocess_strength == 0:
         return raw
     try:

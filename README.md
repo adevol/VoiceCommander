@@ -39,6 +39,13 @@ with that same hotkey (Ctrl+F8 by default) to open the full settings window.
 Saved changes, including the hotkey, microphone, and speech model, take effect
 immediately.
 
+Press the Markdown hotkey (F7 by default) instead when you want to dictate a
+document rather than literal prose. Describe the layout and content you want,
+including headings, lists, tables, code blocks, and formulas; VoiceCommander
+turns it into raw Markdown and types that result at the cursor. Inline formulas
+use `$...$` and display formulas use `$$...$$`. Markdown mode always uses the
+configured post-processing model and therefore requires an OpenRouter API key.
+
 If you keep dictating names, jargon, or product names that come back mangled,
 put them in the **Custom vocabulary** box in settings, comma-separated:
 `Kubernetes, Postgres, Aleksandr`. Those spellings are handed to whichever
