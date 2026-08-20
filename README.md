@@ -74,7 +74,8 @@ uv run voicecommander --captions
 This opens an always-on-top window that captions whatever your computer is
 playing — YouTube included — using the local Whisper model, so no audio
 leaves the machine. Captions appear roughly one chunk (about eight seconds)
-behind live playback and use the language from settings.
+behind live playback and use the language from settings. With **Automatic**
+selected, Whisper detects the spoken language for each chunk.
 
 ## Developing
 
@@ -92,10 +93,13 @@ its model weights from Hugging Face the first time it starts. Any OpenRouter key
 you enter in settings goes into Windows Credential Manager, not into a config
 file; during development you can also set the `OPENROUTER_API_KEY` environment
 variable, which takes precedence. (`.env` files are not read.) Local
-transcription uses multilingual Whisper at the size you picked in settings;
-OpenRouter models are available from the curated dropdown. Language choices are
-limited to seven locales. Live captions always use `base` regardless of that
-setting, because they reload the model once per chunk.
+transcription uses multilingual Whisper at the size you picked in settings:
+`tiny`, `base`, `small`, or `large-v3-turbo`. **Automatic** language detection
+is the default for new configurations, while an existing saved language is
+preserved. You can still choose a specific language when detection needs a
+hint. OpenRouter models are available from the curated dropdown. Live captions
+always use `base` regardless of the model setting, because they reload the model
+once per chunk.
 
 ## Building the installer
 

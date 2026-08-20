@@ -112,6 +112,11 @@ def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) 
     executable, model = loaded_model
     output_base = path.with_suffix(path.suffix + ".whisper")
     output_path = Path(str(output_base) + ".txt")
+    language = (
+        settings.language
+        if settings.language == "auto"
+        else settings.language.split("-", 1)[0].lower()
+    )
     command = [
         str(executable),
         "-m",
@@ -119,7 +124,7 @@ def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) 
         "-f",
         str(path),
         "-l",
-        settings.language.split("-", 1)[0].lower(),
+        language,
         "-t",
         str(min(8, os.cpu_count() or 4)),
         "-otxt",
@@ -216,6 +221,11 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
     Raises:
         RuntimeError: If the request fails or the reply holds no usable text.
     """
+    language_instruction = (
+        "Detect the spoken language and transcribe the audio verbatim."
+        if settings.language == "auto"
+        else f"Transcribe this {settings.language} audio verbatim."
+    )
     payload = {
         "model": settings.openrouter_asr_model,
         "messages": [
@@ -224,9 +234,11 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Transcribe this {settings.language} audio verbatim."
-                        " Reply with the transcript only, with no commentary."
-                        + _vocabulary_hint(settings.vocabulary),
+                        "text": (
+                            language_instruction
+                            + " Reply with the transcript only, with no commentary."
+                            + _vocabulary_hint(settings.vocabulary)
+                        ),
                     },
                     {
                         "type": "input_audio",
@@ -290,6 +302,11 @@ def postprocess_openrouter(
     Raises:
         RuntimeError: If the request fails or the reply holds no usable text.
     """
+    number_format_rule = (
+        "Write numbers, dates, and times naturally for the language of the dictated text."
+        if settings.language == "auto"
+        else f"Write numbers, dates, and times naturally for the {settings.language} locale."
+    )
     if markdown:
         rules = [
             "Turn this dictated description into the finished Markdown content the speaker intends;"
@@ -305,7 +322,7 @@ def postprocess_openrouter(
             "Reply in the language of the dictated text.",
             'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
             " or restarts a phrase, keep only the corrected version and never write the command itself.",
-            f"Write numbers, dates, and times naturally for the {settings.language} locale.",
+            number_format_rule,
             "Return only raw Markdown, without commentary or an outer Markdown code fence.",
         ]
     else:
@@ -318,7 +335,7 @@ def postprocess_openrouter(
             " or restarts a phrase, keep only the corrected version and never write the command itself.",
             'Convert spoken commands ("new paragraph", "bullet point", "quote ... unquote") and'
             " formatting cues into paragraphs, bullets, numbered lists, and punctuation.",
-            f"Write numbers, dates, and times naturally for the {settings.language} locale.",
+            number_format_rule,
             "Return only the finished text.",
         ]
     if settings.vocabulary:

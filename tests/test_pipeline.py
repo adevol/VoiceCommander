@@ -54,6 +54,15 @@ class EssentialTests(unittest.TestCase):
                 self.assertEqual(sha256, expected_sha256)
                 self.assertIn(f"/{filename}", url)
 
+    def test_tiny_uses_the_verified_multilingual_model(self) -> None:
+        self.assertEqual(
+            WHISPER_MODELS["tiny"],
+            (
+                "ggml-tiny-q5_1.bin",
+                "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+            ),
+        )
+
     @patch("voicecommander.pipeline.subprocess.run")
     def test_multilingual_whisper_uses_selected_language(self, run: Mock) -> None:
         run.return_value = Mock(returncode=0, stderr="")
@@ -70,6 +79,23 @@ class EssentialTests(unittest.TestCase):
         self.assertEqual(result, "Guten Tag")
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("-l") + 1], "de")
+
+    @patch("voicecommander.pipeline.subprocess.run")
+    def test_multilingual_whisper_can_detect_language_automatically(self, run: Mock) -> None:
+        run.return_value = Mock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recording.wav"
+            path.touch()
+            Path(str(path) + ".whisper.txt").write_text("Bonjour", encoding="utf-8")
+            result = transcribe_local(
+                path,
+                Settings(),
+                (Path("whisper-cli.exe"), Path("ggml-tiny-q5_1.bin")),
+            )
+
+        self.assertEqual(result, "Bonjour")
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-l") + 1], "auto")
 
     @patch("voicecommander.pipeline._openrouter")
     @patch("voicecommander.pipeline.subprocess.run")
@@ -122,13 +148,21 @@ class EssentialTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unknown settings: hotkeys"):
                 load_settings(path)
 
+    def test_automatic_language_is_the_default_without_overwriting_saved_language(self) -> None:
+        self.assertEqual(Settings().language, "auto")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.toml"
+            path.write_text('language = "de-DE"\n', encoding="utf-8")
+            self.assertEqual(load_settings(path).language, "de-DE")
+
     def test_settings_reject_unsupported_asr_options(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid language"):
             validate(Settings(language="zh-CN"))
         with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
             validate(Settings(openrouter_asr_model="custom/transcriber"))
+        validate(Settings(local_asr_model="tiny"))
         with self.assertRaisesRegex(ValueError, "Invalid local ASR model"):
-            validate(Settings(local_asr_model="tiny"))
+            validate(Settings(local_asr_model="nemotron"))
         with self.assertRaisesRegex(ValueError, "at most 500 characters"):
             validate(Settings(vocabulary="x" * 501))
         with self.assertRaisesRegex(ValueError, "hotkeys must be different"):
@@ -186,6 +220,7 @@ class EssentialTests(unittest.TestCase):
         self.assertIn("professional prose", prompt)
         self.assertIn("scratch that", prompt)
         self.assertIn("language of the dictated text", prompt)
+        self.assertNotIn("auto locale", prompt)
 
     @patch("voicecommander.pipeline._openrouter")
     def test_markdown_mode_requests_structure_and_latex(self, openrouter: Mock) -> None:
@@ -286,6 +321,21 @@ class EssentialTests(unittest.TestCase):
         parts = payload["messages"][0]["content"]
         self.assertIn("de-DE", parts[0]["text"])
         self.assertEqual(parts[1]["input_audio"], {"data": "UklGRg==", "format": "wav"})
+
+    @patch("voicecommander.pipeline._openrouter")
+    def test_openrouter_transcription_can_detect_language_automatically(
+        self, openrouter: Mock
+    ) -> None:
+        openrouter.return_value = {"choices": [{"message": {"content": "Bonjour"}}]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recording.wav"
+            path.write_bytes(b"RIFF")
+            result = transcribe_openrouter(path, Settings(), "secret")
+
+        self.assertEqual(result, "Bonjour")
+        instruction = openrouter.call_args.args[2]["messages"][0]["content"][0]["text"]
+        self.assertIn("Detect the spoken language", instruction)
+        self.assertNotIn("auto", instruction.casefold())
 
     @patch("voicecommander.pipeline.urlopen")
     def test_connection_reset_is_retried_then_reported_cleanly(self, urlopen: Mock) -> None:

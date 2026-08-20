@@ -24,6 +24,7 @@ KEYRING_USER = "OpenRouter"
 ASR_PROVIDERS = ("local", "openrouter")
 WHISPER_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
 WHISPER_MODELS = {
+    "tiny": ("ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7"),
     "base": ("ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"),
     "small": ("ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"),
     "large-v3-turbo": (
@@ -33,6 +34,7 @@ WHISPER_MODELS = {
 }
 LOCAL_ASR_MODELS = tuple(WHISPER_MODELS)
 LANGUAGES = {
+    "Automatic": "auto",
     "English": "en-US",
     "French": "fr-FR",
     "German": "de-DE",
@@ -61,7 +63,7 @@ POSTPROCESS_STYLES = {
 class Settings:
     hotkey: str = "f8"
     markdown_hotkey: str = "f7"
-    language: str = "en-US"
+    language: str = "auto"
     vocabulary: str = ""
     input_device: str = ""
     max_seconds: int = 300
