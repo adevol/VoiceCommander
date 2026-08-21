@@ -3,7 +3,7 @@
 Attributes:
     WHISPER_MODELS: Quantised multilingual whisper.cpp builds, largest last, each
         paired with the Hugging Face LFS oid at `WHISPER_REVISION` that
-        `pipeline._download` enforces.
+        `local_asr._download` enforces.
     OPENROUTER_ASR_MODELS: Chat models that accept audio input, OpenRouter having no
         transcription endpoint.
     VOCABULARY_LIMIT: Characters accepted in the custom vocabulary.
@@ -27,12 +27,13 @@ WHISPER_MODELS = {
     "tiny": ("ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7"),
     "base": ("ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"),
     "small": ("ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"),
-    "large-v3-turbo": (
-        "ggml-large-v3-turbo-q5_0.bin",
-        "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
-    ),
 }
-LOCAL_ASR_MODELS = tuple(WHISPER_MODELS)
+ONNX_PARAKEET_MODELS = ("parakeet-tdt-v3", "parakeet-tdt-v2")
+PARAKEET_CPP_MODELS = ("parakeet-flash", "nemotron-3.5")
+COHERE_MODELS = ("cohere-transcribe",)
+PARAKEET_MODELS = (*ONNX_PARAKEET_MODELS, *PARAKEET_CPP_MODELS)
+LOCAL_ASR_MODELS = (*WHISPER_MODELS, *PARAKEET_MODELS, *COHERE_MODELS)
+LOCAL_MODEL_MIGRATIONS = {"large-v3-turbo": "small"}
 LANGUAGES = {
     "Automatic": "auto",
     "English": "en-US",
@@ -125,6 +126,9 @@ def load_settings(path: Path = CONFIG_PATH) -> Settings:
     if unknown:
         raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
     values = {field.name: data.get(field.name, getattr(defaults, field.name)) for field in fields(Settings)}
+    values["local_asr_model"] = LOCAL_MODEL_MIGRATIONS.get(
+        values["local_asr_model"], values["local_asr_model"]
+    )
     settings = Settings(**values)
     validate(settings)
     return settings

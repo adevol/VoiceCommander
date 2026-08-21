@@ -1,156 +1,18 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
-import os
-import shutil
-import subprocess
-import tempfile
-import zipfile
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .settings import APP_DIR, POSTPROCESS_STYLES, WHISPER_MODELS, WHISPER_REVISION, Settings
+from .local_asr import LoadedModel, load_local_model, transcribe_local
+from .settings import POSTPROCESS_STYLES, Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
-WHISPER_DIR = APP_DIR / "whisper.cpp"
-WHISPER_RUNTIME_URL = (
-    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip"
-)
-WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 logger = logging.getLogger(__name__)
-LoadedModel = tuple[Path, Path]
-
-
-def _download(url: str, destination: Path, expected_sha256: str) -> None:
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    digest = hashlib.sha256()
-    try:
-        with urlopen(url, timeout=300) as response, temporary.open("wb") as output:
-            while chunk := response.read(1024 * 1024):
-                output.write(chunk)
-                digest.update(chunk)
-        if digest.hexdigest() != expected_sha256:
-            raise RuntimeError(f"Downloaded file failed verification: {destination.name}")
-        temporary.replace(destination)
-    except OSError as error:
-        raise RuntimeError(f"Could not download {destination.name}: {error}") from error
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path]:
-    """Return the whisper.cpp runtime and model, downloading either if absent.
-
-    Args:
-        local_asr_model: A key of `WHISPER_MODELS`.
-
-    Returns:
-        The paths to the `whisper-cli` executable and the model file.
-
-    Raises:
-        RuntimeError: If a download fails verification or the runtime archive is
-            missing files.
-    """
-    WHISPER_DIR.mkdir(parents=True, exist_ok=True)
-    executable = WHISPER_DIR / "whisper-cli.exe"
-    runtime_marker = WHISPER_DIR / f".runtime-{WHISPER_RUNTIME_SHA256}"
-    if not (runtime_marker.exists() and executable.exists()):
-        with tempfile.TemporaryDirectory() as directory:
-            archive_path = Path(directory) / "whisper.zip"
-            _download(WHISPER_RUNTIME_URL, archive_path, WHISPER_RUNTIME_SHA256)
-            with zipfile.ZipFile(archive_path) as archive:
-                for member in archive.infolist():
-                    name = Path(member.filename).name
-                    if not member.is_dir() and (
-                        name == "whisper-cli.exe" or name.lower().endswith(".dll")
-                    ):
-                        with archive.open(member) as source, (WHISPER_DIR / name).open("wb") as output:
-                            shutil.copyfileobj(source, output)
-        if not all(
-            (WHISPER_DIR / name).exists()
-            for name in ("whisper-cli.exe", "whisper.dll", "ggml.dll")
-        ):
-            raise RuntimeError("The whisper.cpp runtime archive was incomplete")
-        runtime_marker.touch()
-
-    filename, expected_sha256 = WHISPER_MODELS[local_asr_model]
-    model = WHISPER_DIR / filename
-    if not model.exists():
-        url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/{filename}"
-        _download(url, model, expected_sha256)
-    return executable, model
-
-
-def load_local_model(local_asr_model: str = "base") -> LoadedModel:
-    if local_asr_model not in WHISPER_MODELS:
-        raise RuntimeError(f"Unsupported local ASR model: {local_asr_model}")
-    executable, model = _ensure_whisper(local_asr_model)
-    logger.info("Loaded multilingual Whisper model %s", model)
-    return executable, model
-
-
-def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) -> str:
-    """Transcribe a WAV file with whisper.cpp.
-
-    Args:
-        path: The WAV file to transcribe.
-        settings: Supplies the language, custom vocabulary, and recording limit that
-            sets the subprocess timeout.
-        loaded_model: The executable and model paths from `load_local_model`.
-
-    Returns:
-        The transcript, stripped of surrounding whitespace.
-
-    Raises:
-        RuntimeError: If whisper.cpp exits non-zero or returns an empty transcript.
-    """
-    executable, model = loaded_model
-    output_base = path.with_suffix(path.suffix + ".whisper")
-    output_path = Path(str(output_base) + ".txt")
-    language = (
-        settings.language
-        if settings.language == "auto"
-        else settings.language.split("-", 1)[0].lower()
-    )
-    command = [
-        str(executable),
-        "-m",
-        str(model),
-        "-f",
-        str(path),
-        "-l",
-        language,
-        "-t",
-        str(min(8, os.cpu_count() or 4)),
-        "-otxt",
-        "-of",
-        str(output_base),
-        "-np",
-    ]
-    if settings.vocabulary:
-        command += ["--prompt", settings.vocabulary, "--carry-initial-prompt"]
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=max(300, settings.max_seconds * 4),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if result.returncode:
-            detail = result.stderr.strip()[-500:]
-            raise RuntimeError(f"whisper.cpp failed{f': {detail}' if detail else ''}")
-        text = output_path.read_text(encoding="utf-8").strip()
-    finally:
-        output_path.unlink(missing_ok=True)
-    if not text:
-        raise RuntimeError("Local ASR returned an empty transcript")
-    return text
 
 
 def _openrouter(path: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
