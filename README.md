@@ -1,85 +1,117 @@
 # VoiceCommander
 
-Press a key, talk, press it again, and your words appear wherever the cursor
-is. That is the whole idea. VoiceCommander is a Windows tool that turns speech
-into text with a single hotkey, using multilingual Whisper on your own machine,
-or a cloud model through OpenRouter.
+Press a key, talk, then press it again. VoiceCommander types the result wherever
+your cursor is.
 
-## Where your voice goes
+It is a local-first Windows dictation tool with Whisper, Parakeet, Nemotron,
+and Cohere models. Your computer handles transcription by default. If you want
+cleaner prose or structured Markdown, an optional OpenRouter step works on the
+finished text.
 
-That is the one question worth answering up front, and you answer it in
-settings. Local transcription is the default and nothing leaves your machine;
-choosing an OpenRouter model instead sends your audio to that provider.
+## Use it
 
-Local transcription downloads the pinned, verified CPU-only `whisper.cpp`
-runtime once, then whichever model size you picked. Bigger is more accurate and
-slower:
+| Hotkey | Action |
+| --- | --- |
+| `F8` | Normal dictation |
+| `F7` | Markdown dictation |
+| `Ctrl+F8` | Open settings |
 
-| Size | Download | Speed | |
+New configurations detect the spoken language automatically. You can force a
+language in settings when detection needs a hint. Existing language choices are
+not reset.
+
+```mermaid
+flowchart LR
+    A[Press hotkey] --> B[Talk]
+    B --> C[Press again]
+    C --> D[Text appears]
+```
+
+Installed builds start quietly when you sign in, so the hotkeys are ready
+without opening the application.
+
+## Where your data goes
+
+The normal path stays local until you choose cloud post-processing. Your audio
+goes to the selected model on your computer. OpenRouter receives only the
+resulting text when you ask it to clean up prose or produce Markdown.
+
+```mermaid
+flowchart LR
+    A[Recorded audio] --> B[Local speech model]
+    B --> C[Transcript]
+    C --> D[Paste once]
+    C -. Optional cleanup .-> E[OpenRouter text model]
+    E --> D
+```
+
+Cloud transcription is available as an explicit alternative to local models.
+That setting sends recorded audio to OpenRouter. Editing and Markdown send
+transcript text instead. Every cloud request sets
+[`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),
+which restricts routing to providers OpenRouter identifies as non-collecting.
+OpenRouter still processes the request and records request metadata under its
+own policy.
+
+VoiceCommander stores your API key in Windows Credential Manager, not in its
+configuration file. During development, `OPENROUTER_API_KEY` takes precedence.
+
+## Pick a local model
+
+Models download only when selected. Model files and native runtimes are pinned
+and verified. On Windows, Parakeet Flash and Nemotron use Vulkan, Cohere chooses
+Vulkan automatically, and Parakeet TDT uses DirectML. Each path retains CPU
+execution for unsupported work or failed GPU initialization.
+
+| Model | Download | Measured speed | Trade-off |
 | --- | ---: | ---: | --- |
-| `base` | 57 MiB | ~15x | The default. Quickest, and the least accurate. |
-| `small` | 181 MiB | ~5x | Noticeably better than base and still far quicker than you can talk. |
-| `large-v3-turbo` | 547 MiB | ~1.2x | The most accurate on offer: minimal degradation versus full large-v3 |
+| `tiny` | 31 MiB | Not measured yet | Smallest model; favors speed over accuracy |
+| `base` | 57 MiB | ~15x | Default and fast |
+| `small` | 181 MiB | ~5x | Better recognition while remaining faster than speech |
+| `parakeet-tdt-v3` | ~640 MiB | Not measured yet | Automatic detection across 25 European languages |
+| `parakeet-tdt-v2` | ~630 MiB | Not measured yet | Higher-accuracy English-only Parakeet |
+| `parakeet-flash` | ~123 MiB | Not measured yet | Small, streaming-ready, English only; no punctuation |
+| `nemotron-3.5` | ~685 MiB | Not measured yet | Streaming-ready with automatic detection across 40 locales |
+| `cohere-transcribe` | ~1.65 GiB | Not measured yet | Heavy multilingual model; choose its language for best results |
 
-Speed is measured on an 8-thread Ryzen laptop CPU: ~5× means five seconds of audio transcribes in one second. Faster CPUs improve all models, especially large-v3-turbo.
+The measured speeds come from an 8-thread Ryzen laptop. A speed of 5x means five
+seconds of audio takes about one second to transcribe.
 
-There is no `medium` on purpose. At 514 MiB it is 33 MiB smaller than
-`large-v3-turbo` while being both slower and less accurate, so there is no
-situation in which it is the one you want.
+## Optional cloud post-processing
 
-A size downloads only when you first select it, and is checked against a pinned
-SHA-256 before anything uses it. Switching sizes leaves the old file in place,
-so switching back is instant.
+At editing strength 0, VoiceCommander pastes the raw transcript. Higher values
+send the text to the selected OpenRouter model. You can say commands such as
+"scratch that", "new paragraph", and "bullet point" instead of editing by hand.
 
-## How you use it
+Whisper and cloud editing can use names and technical terms from Custom
+vocabulary. The other local models do not currently support this hint. Separate
+terms with commas:
 
-Press your configured hotkey to start recording, press it again to stop, and
-the transcript is typed into whatever window you were working in. Hold Ctrl
-with that same hotkey (Ctrl+F8 by default) to open the full settings window.
-Saved changes, including the hotkey, microphone, and speech model, take effect
-immediately.
+```text
+Kubernetes, Postgres, Aleksandr
+```
 
-Press the Markdown hotkey (F7 by default) instead when you want to dictate a
-document rather than literal prose. Describe the layout and content you want,
-including headings, lists, tables, code blocks, and formulas; VoiceCommander
-turns it into raw Markdown and types that result at the cursor. Inline formulas
-use `$...$` and display formulas use `$$...$$`. Markdown mode always uses the
-configured post-processing model and therefore requires an OpenRouter API key.
-
-If you keep dictating names, jargon, or product names that come back mangled,
-put them in the **Custom vocabulary** box in settings, comma-separated:
-`Kubernetes, Postgres, Aleksandr`. Those spellings are handed to whichever
-model is transcribing, and to the editing model so it does not undo them. Up
-to 500 characters — a short list biases harder than a long one.
-
-The editing-strength slider controls post-processing: at 0 it is off and your
-words come back exactly as you spoke them; anything above 0 sends the
-transcript text (never the audio) to the model you picked on OpenRouter, so it
-needs an API key even with local transcription. With post-processing on you
-can speak edits — "scratch that", "correction", "new paragraph", "bullet
-point", "quote ... unquote" — and they are applied instead of transcribed.
-
-Installed builds start quietly whenever you sign in, so the hotkey is simply
-always there.
+Use `F7` to dictate headings, lists, tables, code blocks, and formulas as raw
+Markdown. Inline formulas use `$...$`; display formulas use `$$...$$`.
+Markdown mode always requires an OpenRouter API key. If formatting fails,
+VoiceCommander reports the error instead of pasting your spoken instructions.
 
 ## Live captions
 
-Installed builds include a **VoiceCommander Captions** Start menu shortcut.
+The `VoiceCommander Captions` Start menu shortcut captions audio playing on
+your computer in an always-on-top window. Audio stays local. Captions currently
+use `base` and arrive about eight seconds behind playback. Language follows the
+dictation setting, including automatic detection.
+
 During development, run:
 
 ```powershell
 uv run voicecommander --captions
 ```
 
-This opens an always-on-top window that captions whatever your computer is
-playing — YouTube included — using the local Whisper model, so no audio
-leaves the machine. Captions appear roughly one chunk (about eight seconds)
-behind live playback and use the language from settings. With **Automatic**
-selected, Whisper detects the spoken language for each chunk.
+## Develop and build
 
-## Developing
-
-You will need Python 3.13. From there, four commands cover the daily routine:
+VoiceCommander requires Python 3.13 and uses `uv`.
 
 ```powershell
 uv sync
@@ -88,25 +120,10 @@ uv run voicecommander
 uv run python -m unittest discover -s tests
 ```
 
-A few things worth knowing before your first run. Local transcription downloads
-its model weights from Hugging Face the first time it starts. Any OpenRouter key
-you enter in settings goes into Windows Credential Manager, not into a config
-file; during development you can also set the `OPENROUTER_API_KEY` environment
-variable, which takes precedence. (`.env` files are not read.) Local
-transcription uses multilingual Whisper at the size you picked in settings:
-`tiny`, `base`, `small`, or `large-v3-turbo`. **Automatic** language detection
-is the default for new configurations, while an existing saved language is
-preserved. You can still choose a specific language when detection needs a
-hint. OpenRouter models are available from the curated dropdown. Live captions
-always use `base` regardless of the model setting, because they reload the model
-once per chunk.
-
-## Building the installer
-
-Install Inno Setup first. Then:
+Install Inno Setup, then build the installer:
 
 ```powershell
 .\scripts\build.ps1
 ```
 
-The installer lands in `dist/installer/`.
+The installer is written to `dist/installer/`.
