@@ -7,6 +7,7 @@ import unittest
 import wave
 import zipfile
 from io import BytesIO
+from functools import partial
 from pathlib import Path
 from sys import modules
 from unittest.mock import MagicMock, Mock, patch
@@ -19,21 +20,20 @@ from voicecommander.local_asr import (
     PARAKEET_CPP_RUNTIME_URL,
     PARAKEET_CPP_RUNTIME_SHA256,
     WHISPER_RUNTIME_SHA256,
-    CohereModel,
-    ParakeetCppModel,
-    ParakeetModel,
-    WhisperModel,
     _ensure_parakeet_cpp,
     _ensure_whisper,
     _load_cohere,
     _load_parakeet,
+    _transcribe_cohere,
+    _transcribe_parakeet,
+    _transcribe_parakeet_cpp,
+    _transcribe_whisper,
+    load_local_model,
 )
 from voicecommander.pipeline import (
     _openrouter,
-    load_local_model,
     postprocess_openrouter,
     run_pipeline,
-    transcribe_local,
     transcribe_openrouter,
 )
 from voicecommander.settings import (
@@ -105,11 +105,12 @@ class EssentialTests(unittest.TestCase):
             path = Path(directory) / "recording.wav"
             path.touch()
             Path(str(path) + ".whisper.txt").write_text("Guten Tag", encoding="utf-8")
-            result = transcribe_local(
-                path,
-                Settings(language="de-DE"),
-                WhisperModel(Path("whisper-cli.exe"), Path("ggml-base-q5_1.bin")),
+            model = partial(
+                _transcribe_whisper,
+                Path("whisper-cli.exe"),
+                Path("ggml-base-q5_1.bin"),
             )
+            result = model(path, Settings(language="de-DE"))
 
         self.assertEqual(result, "Guten Tag")
         command = run.call_args.args[0]
@@ -122,11 +123,12 @@ class EssentialTests(unittest.TestCase):
             path = Path(directory) / "recording.wav"
             path.touch()
             Path(str(path) + ".whisper.txt").write_text("Bonjour", encoding="utf-8")
-            result = transcribe_local(
-                path,
-                Settings(),
-                WhisperModel(Path("whisper-cli.exe"), Path("ggml-tiny-q5_1.bin")),
+            model = partial(
+                _transcribe_whisper,
+                Path("whisper-cli.exe"),
+                Path("ggml-tiny-q5_1.bin"),
             )
+            result = model(path, Settings())
 
         self.assertEqual(result, "Bonjour")
         command = run.call_args.args[0]
@@ -143,7 +145,8 @@ class EssentialTests(unittest.TestCase):
             path.write_bytes(b"RIFF")
             transcript = Path(str(path) + ".whisper.txt")
             transcript.write_text("Kubernetes", encoding="utf-8")
-            transcribe_local(path, settings, WhisperModel(Path("w.exe"), Path("m.bin")))
+            model = partial(_transcribe_whisper, Path("w.exe"), Path("m.bin"))
+            model(path, settings)
             transcribe_openrouter(path, settings, "secret")
             postprocess_openrouter("Raw", settings, "secret")
 
@@ -159,7 +162,7 @@ class EssentialTests(unittest.TestCase):
                 self.assertIn("Kubernetes, VoiceCommander", str(call.args[2]["messages"]))
 
             transcript.write_text("Kubernetes", encoding="utf-8")
-            transcribe_local(path, Settings(), WhisperModel(Path("w.exe"), Path("m.bin")))
+            model(path, Settings())
         self.assertNotIn("--prompt", run.call_args.args[0])
 
     def test_parakeet_models_use_pinned_int8_snapshots(self) -> None:
@@ -179,7 +182,7 @@ class EssentialTests(unittest.TestCase):
         ):
             model = _load_parakeet("parakeet-tdt-v3")
 
-        self.assertIsInstance(model, ParakeetModel)
+        self.assertTrue(callable(model))
         snapshot_download.assert_called_once()
         self.assertEqual(
             snapshot_download.call_args.kwargs["revision"],
@@ -223,7 +226,7 @@ class EssentialTests(unittest.TestCase):
         ):
             model = _load_parakeet("parakeet-tdt-v3")
 
-        self.assertIsInstance(model, ParakeetModel)
+        self.assertTrue(callable(model))
         self.assertEqual(
             [call.kwargs["providers"] for call in onnx_asr.load_model.call_args_list],
             [
@@ -235,16 +238,16 @@ class EssentialTests(unittest.TestCase):
     def test_parakeet_v3_transcribes_and_v2_rejects_forced_non_english(self) -> None:
         recognizer = Mock()
         recognizer.recognize.return_value = "  Guten Tag  "
+        model = partial(_transcribe_parakeet, recognizer, False)
         self.assertEqual(
-            ParakeetModel(recognizer).transcribe(Path("recording.wav"), Settings()),
+            model(Path("recording.wav"), Settings()),
             "Guten Tag",
         )
         recognizer.recognize.assert_called_once_with("recording.wav")
 
+        english_model = partial(_transcribe_parakeet, recognizer, True)
         with self.assertRaisesRegex(RuntimeError, "supports English only"):
-            ParakeetModel(recognizer, english_only=True).transcribe(
-                Path("recording.wav"), Settings(language="de-DE")
-            )
+            english_model(Path("recording.wav"), Settings(language="de-DE"))
 
     @patch("voicecommander.local_asr._download")
     def test_parakeet_cpp_runtime_and_model_are_verified(self, download: Mock) -> None:
@@ -280,17 +283,27 @@ class EssentialTests(unittest.TestCase):
         self, run: Mock
     ) -> None:
         run.return_value = Mock(returncode=0, stdout='{"text":"  Guten Tag  "}', stderr="")
-        model = ParakeetCppModel(Path("parakeet-cli.exe"), Path("nemotron.gguf"))
-
-        self.assertEqual(model.transcribe(Path("recording.wav"), Settings()), "Guten Tag")
+        model = partial(
+            _transcribe_parakeet_cpp,
+            Path("parakeet-cli.exe"),
+            Path("nemotron.gguf"),
+            False,
+        )
+        self.assertEqual(
+            model(Path("recording.wav"), Settings()),
+            "Guten Tag",
+        )
         command = run.call_args.args[0]
         self.assertEqual(command[command.index("--lang") + 1], "auto")
 
-        flash = ParakeetCppModel(
-            Path("parakeet-cli.exe"), Path("flash.gguf"), english_only=True
+        flash = partial(
+            _transcribe_parakeet_cpp,
+            Path("parakeet-cli.exe"),
+            Path("flash.gguf"),
+            True,
         )
         with self.assertRaisesRegex(RuntimeError, "Flash supports English only"):
-            flash.transcribe(Path("recording.wav"), Settings(language="de-DE"))
+            flash(Path("recording.wav"), Settings(language="de-DE"))
 
     def test_cohere_receives_float_pcm_and_a_forced_language(self) -> None:
         session = MagicMock()
@@ -305,21 +318,22 @@ class EssentialTests(unittest.TestCase):
                 recording.setsampwidth(2)
                 recording.setframerate(16_000)
                 recording.writeframes(b"\x00\x00\xff\x7f")
-            text = CohereModel(native_model).transcribe(path, Settings(language="fr-FR"))
+            model = partial(_transcribe_cohere, native_model)
+            text = model(path, Settings(language="fr-FR"))
 
         self.assertEqual(text, "Bonjour")
         pcm = session.run.call_args.args[0]
         self.assertEqual(len(pcm), 2)
         self.assertEqual(session.run.call_args.kwargs, {"language": "fr", "timestamps": "none"})
 
-    @patch("voicecommander.local_asr._ensure_cohere", return_value=Path("cohere.gguf"))
+    @patch("voicecommander.local_asr._ensure_file", return_value=Path("cohere.gguf"))
     def test_cohere_uses_the_native_transcribe_cpp_runtime(self, ensure: Mock) -> None:
         transcribe_cpp = Mock()
         with patch.dict(modules, {"transcribe_cpp": transcribe_cpp}):
             model = _load_cohere()
 
-        self.assertIsInstance(model, CohereModel)
-        ensure.assert_called_once_with()
+        self.assertTrue(callable(model))
+        ensure.assert_called_once()
         transcribe_cpp.Model.assert_called_once_with("cohere.gguf", backend="auto")
         self.assertEqual(
             COHERE_MODEL_SHA256,

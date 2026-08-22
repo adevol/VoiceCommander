@@ -13,9 +13,9 @@ import tempfile
 import wave
 import zipfile
 from array import array
-from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable
 from urllib.request import urlopen
 
 from .settings import (
@@ -79,19 +79,7 @@ COHERE_MODEL_URL = (
 )
 COHERE_MODEL_SHA256 = "14d02f1ad6dd77b3a60f82639879012c3adb4fe25c50a5a47a2c4c661daf1558"
 logger = logging.getLogger(__name__)
-
-
-class LocalModel(Protocol):
-    """A loaded local model that can transcribe one WAV file."""
-
-    def transcribe(self, path: Path, settings: Settings) -> str: ...
-
-
-class ParakeetRecognizer(Protocol):
-    def recognize(self, waveform: str) -> str: ...
-
-
-LoadedModel = LocalModel
+LocalModel = Callable[[Path, Settings], str]
 
 
 def _download(url: str, destination: Path, expected_sha256: str) -> None:
@@ -111,189 +99,180 @@ def _download(url: str, destination: Path, expected_sha256: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _ensure_file(path: Path, url: str, sha256: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        _download(url, path, sha256)
+    return path
+
+
+def _ensure_runtime(
+    directory: Path,
+    executable_name: str,
+    url: str,
+    sha256: str,
+    required: tuple[str, ...] = (),
+) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    executable = directory / executable_name
+    marker = directory / f".runtime-{sha256}"
+    if marker.exists() and executable.exists():
+        return executable
+
+    with tempfile.TemporaryDirectory() as temporary:
+        archive_path = Path(temporary) / "runtime.zip"
+        _download(url, archive_path, sha256)
+        with zipfile.ZipFile(archive_path) as archive:
+            for member in archive.infolist():
+                name = Path(member.filename).name
+                if not member.is_dir() and (
+                    name == executable_name or name.lower().endswith(".dll")
+                ):
+                    with archive.open(member) as source, (directory / name).open(
+                        "wb"
+                    ) as output:
+                        shutil.copyfileobj(source, output)
+
+    if not all((directory / name).exists() for name in (executable_name, *required)):
+        raise RuntimeError("The local ASR runtime archive was incomplete")
+    marker.touch()
+    return executable
+
+
 def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path]:
     """Return the whisper.cpp runtime and model, downloading either if absent."""
-    WHISPER_DIR.mkdir(parents=True, exist_ok=True)
-    executable = WHISPER_DIR / "whisper-cli.exe"
-    runtime_marker = WHISPER_DIR / f".runtime-{WHISPER_RUNTIME_SHA256}"
-    if not (runtime_marker.exists() and executable.exists()):
-        with tempfile.TemporaryDirectory() as directory:
-            archive_path = Path(directory) / "whisper.zip"
-            _download(WHISPER_RUNTIME_URL, archive_path, WHISPER_RUNTIME_SHA256)
-            with zipfile.ZipFile(archive_path) as archive:
-                for member in archive.infolist():
-                    name = Path(member.filename).name
-                    if not member.is_dir() and (
-                        name == "whisper-cli.exe" or name.lower().endswith(".dll")
-                    ):
-                        with archive.open(member) as source, (
-                            WHISPER_DIR / name
-                        ).open("wb") as output:
-                            shutil.copyfileobj(source, output)
-        if not all(
-            (WHISPER_DIR / name).exists()
-            for name in ("whisper-cli.exe", "whisper.dll", "ggml.dll")
-        ):
-            raise RuntimeError("The whisper.cpp runtime archive was incomplete")
-        runtime_marker.touch()
-
+    executable = _ensure_runtime(
+        WHISPER_DIR,
+        "whisper-cli.exe",
+        WHISPER_RUNTIME_URL,
+        WHISPER_RUNTIME_SHA256,
+        ("whisper.dll", "ggml.dll"),
+    )
     filename, expected_sha256 = WHISPER_MODELS[local_asr_model]
-    model = WHISPER_DIR / filename
-    if not model.exists():
-        url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/{filename}"
-        _download(url, model, expected_sha256)
+    model = _ensure_file(
+        WHISPER_DIR / filename,
+        f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/{filename}",
+        expected_sha256,
+    )
     return executable, model
 
 
 def _ensure_parakeet_cpp(local_asr_model: str) -> tuple[Path, Path]:
     """Return the native parakeet.cpp runtime and selected verified model."""
-    PARAKEET_CPP_DIR.mkdir(parents=True, exist_ok=True)
-    executable = PARAKEET_CPP_DIR / "parakeet-cli.exe"
-    runtime_marker = PARAKEET_CPP_DIR / f".runtime-{PARAKEET_CPP_RUNTIME_SHA256}"
-    if not (runtime_marker.exists() and executable.exists()):
-        with tempfile.TemporaryDirectory() as directory:
-            archive_path = Path(directory) / "parakeet.zip"
-            _download(
-                PARAKEET_CPP_RUNTIME_URL,
-                archive_path,
-                PARAKEET_CPP_RUNTIME_SHA256,
-            )
-            with zipfile.ZipFile(archive_path) as archive:
-                for member in archive.infolist():
-                    name = Path(member.filename).name
-                    if not member.is_dir() and (
-                        name == "parakeet-cli.exe" or name.lower().endswith(".dll")
-                    ):
-                        with archive.open(member) as source, (
-                            PARAKEET_CPP_DIR / name
-                        ).open("wb") as output:
-                            shutil.copyfileobj(source, output)
-        if not executable.exists():
-            raise RuntimeError("The parakeet.cpp runtime archive was incomplete")
-        runtime_marker.touch()
-
+    executable = _ensure_runtime(
+        PARAKEET_CPP_DIR,
+        "parakeet-cli.exe",
+        PARAKEET_CPP_RUNTIME_URL,
+        PARAKEET_CPP_RUNTIME_SHA256,
+    )
     filename, expected_sha256 = PARAKEET_CPP_FILES[local_asr_model]
-    model = PARAKEET_CPP_DIR / filename
-    if not model.exists():
-        url = (
+    model = _ensure_file(
+        PARAKEET_CPP_DIR / filename,
+        (
             "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/"
             f"{PARAKEET_CPP_REVISION}/{filename}"
-        )
-        _download(url, model, expected_sha256)
+        ),
+        expected_sha256,
+    )
     return executable, model
 
 
-def _ensure_cohere() -> Path:
-    COHERE_DIR.mkdir(parents=True, exist_ok=True)
-    model = COHERE_DIR / COHERE_FILENAME
-    if not model.exists():
-        _download(COHERE_MODEL_URL, model, COHERE_MODEL_SHA256)
-    return model
+def _run(
+    command: list[str], runtime: str, max_seconds: int
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=max(300, max_seconds * 4),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode:
+        detail = result.stderr.strip()[-500:]
+        raise RuntimeError(f"{runtime} failed{f': {detail}' if detail else ''}")
+    return result
 
 
-@dataclass(frozen=True, slots=True)
-class WhisperModel:
-    executable: Path
-    model: Path
-
-    def transcribe(self, path: Path, settings: Settings) -> str:
-        output_base = path.with_suffix(path.suffix + ".whisper")
-        output_path = Path(str(output_base) + ".txt")
-        language = (
-            settings.language
-            if settings.language == "auto"
-            else settings.language.split("-", 1)[0].lower()
-        )
-        command = [
-            str(self.executable),
-            "-m",
-            str(self.model),
-            "-f",
-            str(path),
-            "-l",
-            language,
-            "-t",
-            str(min(8, os.cpu_count() or 4)),
-            "-otxt",
-            "-of",
-            str(output_base),
-            "-np",
-        ]
-        if settings.vocabulary:
-            command += ["--prompt", settings.vocabulary, "--carry-initial-prompt"]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=max(300, settings.max_seconds * 4),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            if result.returncode:
-                detail = result.stderr.strip()[-500:]
-                raise RuntimeError(f"whisper.cpp failed{f': {detail}' if detail else ''}")
-            text = output_path.read_text(encoding="utf-8").strip()
-        finally:
-            output_path.unlink(missing_ok=True)
-        if not text:
-            raise RuntimeError("Local ASR returned an empty transcript")
-        return text
+def _transcript(text: str) -> str:
+    text = text.strip()
+    if not text:
+        raise RuntimeError("Local ASR returned an empty transcript")
+    return text
 
 
-@dataclass(frozen=True, slots=True)
-class ParakeetModel:
-    recognizer: ParakeetRecognizer
-    english_only: bool = False
+def _transcribe_whisper(
+    executable: Path, model: Path, path: Path, settings: Settings
+) -> str:
+    output_base = path.with_suffix(path.suffix + ".whisper")
+    output_path = Path(str(output_base) + ".txt")
+    language = (
+        settings.language
+        if settings.language == "auto"
+        else settings.language.split("-", 1)[0].lower()
+    )
+    command = [
+        str(executable),
+        "-m",
+        str(model),
+        "-f",
+        str(path),
+        "-l",
+        language,
+        "-t",
+        str(min(8, os.cpu_count() or 4)),
+        "-otxt",
+        "-of",
+        str(output_base),
+        "-np",
+    ]
+    if settings.vocabulary:
+        command += ["--prompt", settings.vocabulary, "--carry-initial-prompt"]
+    try:
+        _run(command, "whisper.cpp", settings.max_seconds)
+        text = output_path.read_text(encoding="utf-8")
+    finally:
+        output_path.unlink(missing_ok=True)
+    return _transcript(text)
 
-    def transcribe(self, path: Path, settings: Settings) -> str:
-        if self.english_only and settings.language not in {"auto", "en-US"}:
-            raise RuntimeError("Parakeet TDT v2 supports English only")
-        try:
-            text = self.recognizer.recognize(str(path)).strip()
-        except Exception as error:
-            raise RuntimeError(f"Parakeet transcription failed: {error}") from error
-        if not text:
-            raise RuntimeError("Local ASR returned an empty transcript")
-        return text
+
+def _transcribe_parakeet(
+    recognizer: Any, english_only: bool, path: Path, settings: Settings
+) -> str:
+    if english_only and settings.language not in {"auto", "en-US"}:
+        raise RuntimeError("Parakeet TDT v2 supports English only")
+    try:
+        text = recognizer.recognize(str(path))
+    except Exception as error:
+        raise RuntimeError(f"Parakeet transcription failed: {error}") from error
+    return _transcript(text)
 
 
-@dataclass(frozen=True, slots=True)
-class ParakeetCppModel:
-    executable: Path
-    model: Path
-    english_only: bool = False
-
-    def transcribe(self, path: Path, settings: Settings) -> str:
-        if self.english_only and settings.language not in {"auto", "en-US"}:
-            raise RuntimeError("Parakeet Flash supports English only")
-        command = [
-            str(self.executable),
-            "transcribe",
-            "--model",
-            str(self.model),
-            "--input",
-            str(path),
-            "--json",
-        ]
-        if not self.english_only:
-            command += ["--lang", settings.language]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=max(300, settings.max_seconds * 4),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if result.returncode:
-            detail = result.stderr.strip()[-500:]
-            raise RuntimeError(f"parakeet.cpp failed{f': {detail}' if detail else ''}")
-        try:
-            text = str(json.loads(result.stdout)["text"]).strip()
-        except (json.JSONDecodeError, KeyError, TypeError) as error:
-            raise RuntimeError("parakeet.cpp returned an invalid transcript") from error
-        if not text:
-            raise RuntimeError("Local ASR returned an empty transcript")
-        return text
+def _transcribe_parakeet_cpp(
+    executable: Path,
+    model: Path,
+    english_only: bool,
+    path: Path,
+    settings: Settings,
+) -> str:
+    if english_only and settings.language not in {"auto", "en-US"}:
+        raise RuntimeError("Parakeet Flash supports English only")
+    command = [
+        str(executable),
+        "transcribe",
+        "--model",
+        str(model),
+        "--input",
+        str(path),
+        "--json",
+    ]
+    if not english_only:
+        command += ["--lang", settings.language]
+    result = _run(command, "parakeet.cpp", settings.max_seconds)
+    try:
+        text = str(json.loads(result.stdout)["text"])
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise RuntimeError("parakeet.cpp returned an invalid transcript") from error
+    return _transcript(text)
 
 
 def _read_float32_wav(path: Path) -> array[float]:
@@ -315,27 +294,22 @@ def _read_float32_wav(path: Path) -> array[float]:
     return array("f", (sample / 32768.0 for sample in samples))
 
 
-@dataclass(frozen=True, slots=True)
-class CohereModel:
-    model: Any
-
-    def transcribe(self, path: Path, settings: Settings) -> str:
-        pcm = _read_float32_wav(path)
-        language = None
-        if settings.language != "auto":
-            language = settings.language.split("-", 1)[0].lower()
-        try:
-            with self.model.session() as session:
-                result = session.run(pcm, language=language, timestamps="none")
-            text = result.text.strip()
-        except Exception as error:
-            raise RuntimeError(f"Cohere transcription failed: {error}") from error
-        if not text:
-            raise RuntimeError("Local ASR returned an empty transcript")
-        return text
+def _transcribe_cohere(model: Any, path: Path, settings: Settings) -> str:
+    pcm = _read_float32_wav(path)
+    language = (
+        None
+        if settings.language == "auto"
+        else settings.language.split("-", 1)[0].lower()
+    )
+    try:
+        with model.session() as session:
+            result = session.run(pcm, language=language, timestamps="none")
+    except Exception as error:
+        raise RuntimeError(f"Cohere transcription failed: {error}") from error
+    return _transcript(result.text)
 
 
-def _load_parakeet(local_asr_model: str) -> ParakeetModel:
+def _load_parakeet(local_asr_model: str) -> LocalModel:
     try:
         import onnx_asr
         import onnxruntime
@@ -355,75 +329,73 @@ def _load_parakeet(local_asr_model: str) -> ParakeetModel:
     except Exception as error:
         raise RuntimeError(f"Could not load {local_asr_model}: {error}") from error
 
-    available = onnxruntime.get_available_providers()
-    providers = ["CPUExecutionProvider"]
-    if "DmlExecutionProvider" in available:
-        providers.insert(0, "DmlExecutionProvider")
-    try:
-        recognizer = onnx_asr.load_model(
-            model_name,
-            model_dir,
-            quantization="int8",
-            providers=providers,
-        )
-    except Exception as gpu_error:
-        if providers[0] != "DmlExecutionProvider":
-            raise RuntimeError(f"Could not load {local_asr_model}: {gpu_error}") from gpu_error
-        logger.warning(
-            "DirectML could not load %s; retrying on CPU: %s",
-            local_asr_model,
-            gpu_error,
-        )
+    provider_choices = [["CPUExecutionProvider"]]
+    if "DmlExecutionProvider" in onnxruntime.get_available_providers():
+        provider_choices.insert(0, ["DmlExecutionProvider", "CPUExecutionProvider"])
+    for providers in provider_choices:
         try:
             recognizer = onnx_asr.load_model(
                 model_name,
                 model_dir,
                 quantization="int8",
-                providers=["CPUExecutionProvider"],
+                providers=providers,
             )
-            providers = ["CPUExecutionProvider"]
-        except Exception as cpu_error:
-            raise RuntimeError(
-                f"Could not load {local_asr_model}: {cpu_error}"
-            ) from cpu_error
+            break
+        except Exception as error:
+            if providers[0] == "CPUExecutionProvider":
+                raise RuntimeError(f"Could not load {local_asr_model}: {error}") from error
+            logger.warning(
+                "DirectML could not load %s; retrying on CPU: %s",
+                local_asr_model,
+                error,
+            )
     logger.info(
         "Loaded %s from pinned ONNX snapshot %s using %s",
         local_asr_model,
         revision,
         providers[0],
     )
-    return ParakeetModel(recognizer, english_only=local_asr_model == "parakeet-tdt-v2")
-
-
-def _load_parakeet_cpp(local_asr_model: str) -> ParakeetCppModel:
-    executable, model = _ensure_parakeet_cpp(local_asr_model)
-    logger.info("Loaded %s with parakeet.cpp", local_asr_model)
-    return ParakeetCppModel(
-        executable,
-        model,
-        english_only=local_asr_model == "parakeet-flash",
+    return partial(
+        _transcribe_parakeet,
+        recognizer,
+        local_asr_model == "parakeet-tdt-v2",
     )
 
 
-def _load_cohere() -> CohereModel:
+def _load_parakeet_cpp(local_asr_model: str) -> LocalModel:
+    executable, model = _ensure_parakeet_cpp(local_asr_model)
+    logger.info("Loaded %s with parakeet.cpp", local_asr_model)
+    return partial(
+        _transcribe_parakeet_cpp,
+        executable,
+        model,
+        local_asr_model == "parakeet-flash",
+    )
+
+
+def _load_cohere() -> LocalModel:
     try:
         import transcribe_cpp
     except ImportError as error:
         raise RuntimeError("Cohere support is not installed") from error
-    model_path = _ensure_cohere()
+    model_path = _ensure_file(
+        COHERE_DIR / COHERE_FILENAME,
+        COHERE_MODEL_URL,
+        COHERE_MODEL_SHA256,
+    )
     try:
         model = transcribe_cpp.Model(str(model_path), backend="auto")
     except Exception as error:
         raise RuntimeError(f"Could not load cohere-transcribe: {error}") from error
     logger.info("Loaded Cohere Transcribe with transcribe.cpp")
-    return CohereModel(model)
+    return partial(_transcribe_cohere, model)
 
 
-def load_local_model(local_asr_model: str = "base") -> LoadedModel:
+def load_local_model(local_asr_model: str = "base") -> LocalModel:
     if local_asr_model in WHISPER_MODELS:
         executable, model = _ensure_whisper(local_asr_model)
         logger.info("Loaded multilingual Whisper model %s", model)
-        return WhisperModel(executable, model)
+        return partial(_transcribe_whisper, executable, model)
     if local_asr_model in ONNX_PARAKEET_MODELS:
         return _load_parakeet(local_asr_model)
     if local_asr_model in PARAKEET_CPP_MODELS:
@@ -431,7 +403,3 @@ def load_local_model(local_asr_model: str = "base") -> LoadedModel:
     if local_asr_model in COHERE_MODELS:
         return _load_cohere()
     raise RuntimeError(f"Unsupported local ASR model: {local_asr_model}")
-
-
-def transcribe_local(path: Path, settings: Settings, loaded_model: LoadedModel) -> str:
-    return loaded_model.transcribe(path, settings)

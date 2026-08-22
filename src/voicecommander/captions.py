@@ -14,7 +14,7 @@ import threading
 from contextlib import suppress
 
 from .audio import SAMPLE_RATE, write_wav
-from .pipeline import load_local_model, transcribe_local
+from .local_asr import load_local_model
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ def _transcribe(
             continue
         path = write_wav((numpy.clip(chunk, -1, 1) * 32767).astype(numpy.int16).tobytes())
         try:
-            text = transcribe_local(path, settings, model)
+            text = model(path, settings)
         except Exception as error:
             logger.warning("Caption chunk failed: %s", error)
             continue

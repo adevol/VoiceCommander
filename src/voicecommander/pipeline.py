@@ -8,7 +8,7 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .local_asr import LoadedModel, load_local_model, transcribe_local
+from .local_asr import LocalModel
 from .settings import POSTPROCESS_STYLES, Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
@@ -118,11 +118,16 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
     return _message_text(_openrouter("/chat/completions", api_key, payload), "transcript")
 
 
-def transcribe(path: Path, settings: Settings, loaded_model: LoadedModel | None, api_key: str) -> str:
+def transcribe(
+    path: Path,
+    settings: Settings,
+    loaded_model: LocalModel | None,
+    api_key: str,
+) -> str:
     if settings.asr_provider == "local":
         if loaded_model is None:
             raise RuntimeError("Local ASR model is not loaded")
-        return transcribe_local(path, settings, loaded_model)
+        return loaded_model(path, settings)
     return transcribe_openrouter(path, settings, api_key)
 
 
@@ -218,7 +223,7 @@ def postprocess_openrouter(
 def run_pipeline(
     path: Path,
     settings: Settings,
-    loaded_model: LoadedModel | None,
+    loaded_model: LocalModel | None,
     api_key: str,
     markdown: bool = False,
 ) -> str:
