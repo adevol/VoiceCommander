@@ -4,29 +4,18 @@ import queue
 import tempfile
 import threading
 import unittest
-import wave
-import zipfile
-from io import BytesIO
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 from sys import modules
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
-    COHERE_MODEL_SHA256,
-    PARAKEET_CPP_RUNTIME_URL,
-    PARAKEET_CPP_RUNTIME_SHA256,
     WHISPER_RUNTIME_SHA256,
-    _ensure_parakeet_cpp,
     _ensure_whisper,
-    _load_cohere,
-    _load_parakeet,
-    _transcribe_cohere,
-    _transcribe_parakeet,
-    _transcribe_parakeet_cpp,
     _transcribe_whisper,
     load_local_model,
 )
@@ -49,27 +38,6 @@ class EssentialTests(unittest.TestCase):
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
             load_local_model("nemotron")
-
-    def test_new_model_choices_reach_their_native_loaders(self) -> None:
-        flash = Mock()
-        nemotron = Mock()
-        cohere = Mock()
-        with (
-            patch(
-                "voicecommander.local_asr._load_parakeet_cpp",
-                side_effect=[flash, nemotron],
-            ) as load_parakeet_cpp,
-            patch("voicecommander.local_asr._load_cohere", return_value=cohere) as load_cohere,
-        ):
-            self.assertIs(load_local_model("parakeet-flash"), flash)
-            self.assertIs(load_local_model("nemotron-3.5"), nemotron)
-            self.assertIs(load_local_model("cohere-transcribe"), cohere)
-
-        self.assertEqual(
-            [call.args[0] for call in load_parakeet_cpp.call_args_list],
-            ["parakeet-flash", "nemotron-3.5"],
-        )
-        load_cohere.assert_called_once_with()
 
     @patch("voicecommander.local_asr._download")
     def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
@@ -165,181 +133,6 @@ class EssentialTests(unittest.TestCase):
             model(path, Settings())
         self.assertNotIn("--prompt", run.call_args.args[0])
 
-    def test_parakeet_models_use_pinned_int8_snapshots(self) -> None:
-        recognizer = Mock()
-        onnx_asr = Mock()
-        onnx_asr.load_model.return_value = recognizer
-        onnxruntime = Mock()
-        onnxruntime.get_available_providers.return_value = ["CPUExecutionProvider"]
-        snapshot_download = Mock()
-        with patch.dict(
-            modules,
-            {
-                "onnx_asr": onnx_asr,
-                "onnxruntime": onnxruntime,
-                "huggingface_hub": Mock(snapshot_download=snapshot_download),
-            },
-        ):
-            model = _load_parakeet("parakeet-tdt-v3")
-
-        self.assertTrue(callable(model))
-        snapshot_download.assert_called_once()
-        self.assertEqual(
-            snapshot_download.call_args.kwargs["revision"],
-            "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
-        )
-        self.assertEqual(
-            snapshot_download.call_args.kwargs["allow_patterns"],
-            (
-                "config.json",
-                "vocab.txt",
-                "encoder-model.int8.onnx",
-                "decoder_joint-model.int8.onnx",
-            ),
-        )
-        onnx_asr.load_model.assert_called_once_with(
-            "nemo-parakeet-tdt-0.6b-v3",
-            snapshot_download.call_args.kwargs["local_dir"],
-            quantization="int8",
-            providers=["CPUExecutionProvider"],
-        )
-
-    def test_parakeet_prefers_directml_and_retries_on_cpu(self) -> None:
-        recognizer = Mock()
-        onnx_asr = Mock()
-        onnx_asr.load_model.side_effect = [RuntimeError("GPU failed"), recognizer]
-        onnxruntime = Mock()
-        onnxruntime.get_available_providers.return_value = [
-            "DmlExecutionProvider",
-            "CPUExecutionProvider",
-        ]
-        with (
-            patch.dict(
-                modules,
-                {
-                    "onnx_asr": onnx_asr,
-                    "onnxruntime": onnxruntime,
-                    "huggingface_hub": Mock(snapshot_download=Mock()),
-                },
-            ),
-            self.assertLogs("voicecommander.local_asr", level="WARNING"),
-        ):
-            model = _load_parakeet("parakeet-tdt-v3")
-
-        self.assertTrue(callable(model))
-        self.assertEqual(
-            [call.kwargs["providers"] for call in onnx_asr.load_model.call_args_list],
-            [
-                ["DmlExecutionProvider", "CPUExecutionProvider"],
-                ["CPUExecutionProvider"],
-            ],
-        )
-
-    def test_parakeet_v3_transcribes_and_v2_rejects_forced_non_english(self) -> None:
-        recognizer = Mock()
-        recognizer.recognize.return_value = "  Guten Tag  "
-        model = partial(_transcribe_parakeet, recognizer, False)
-        self.assertEqual(
-            model(Path("recording.wav"), Settings()),
-            "Guten Tag",
-        )
-        recognizer.recognize.assert_called_once_with("recording.wav")
-
-        english_model = partial(_transcribe_parakeet, recognizer, True)
-        with self.assertRaisesRegex(RuntimeError, "supports English only"):
-            english_model(Path("recording.wav"), Settings(language="de-DE"))
-
-    @patch("voicecommander.local_asr._download")
-    def test_parakeet_cpp_runtime_and_model_are_verified(self, download: Mock) -> None:
-        def create_download(_url: str, destination: Path, _sha256: str) -> None:
-            if destination.suffix == ".zip":
-                with zipfile.ZipFile(destination, "w") as archive:
-                    archive.writestr("bin/parakeet-cli.exe", b"exe")
-                    archive.writestr("bin/ggml.dll", b"dll")
-            else:
-                destination.write_bytes(b"model")
-
-        download.side_effect = create_download
-        with tempfile.TemporaryDirectory() as directory, patch(
-            "voicecommander.local_asr.PARAKEET_CPP_DIR", Path(directory)
-        ):
-            executable, model = _ensure_parakeet_cpp("parakeet-flash")
-
-        self.assertEqual(executable.name, "parakeet-cli.exe")
-        self.assertEqual(model.name, "realtime_eou_120m-v1-q4_k.gguf")
-        self.assertIn("win-vulkan-x64", PARAKEET_CPP_RUNTIME_URL)
-        self.assertEqual(download.call_args_list[0].args[2], PARAKEET_CPP_RUNTIME_SHA256)
-        self.assertEqual(
-            PARAKEET_CPP_RUNTIME_SHA256,
-            "717c416fab299755e8140137e3a0115121ce1acb6379d13c60f2f0613f6c13a3",
-        )
-        self.assertEqual(
-            download.call_args_list[1].args[2],
-            "ac9109d0e422bd8aafa899c0f58e1938f4a2846838797a29c04f6a8729033c3c",
-        )
-
-    @patch("voicecommander.local_asr.subprocess.run")
-    def test_native_parakeet_models_transcribe_with_their_language_rules(
-        self, run: Mock
-    ) -> None:
-        run.return_value = Mock(returncode=0, stdout='{"text":"  Guten Tag  "}', stderr="")
-        model = partial(
-            _transcribe_parakeet_cpp,
-            Path("parakeet-cli.exe"),
-            Path("nemotron.gguf"),
-            False,
-        )
-        self.assertEqual(
-            model(Path("recording.wav"), Settings()),
-            "Guten Tag",
-        )
-        command = run.call_args.args[0]
-        self.assertEqual(command[command.index("--lang") + 1], "auto")
-
-        flash = partial(
-            _transcribe_parakeet_cpp,
-            Path("parakeet-cli.exe"),
-            Path("flash.gguf"),
-            True,
-        )
-        with self.assertRaisesRegex(RuntimeError, "Flash supports English only"):
-            flash(Path("recording.wav"), Settings(language="de-DE"))
-
-    def test_cohere_receives_float_pcm_and_a_forced_language(self) -> None:
-        session = MagicMock()
-        session.__enter__.return_value = session
-        session.run.return_value = Mock(text="  Bonjour  ")
-        native_model = Mock()
-        native_model.session.return_value = session
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "recording.wav"
-            with wave.open(str(path), "wb") as recording:
-                recording.setnchannels(1)
-                recording.setsampwidth(2)
-                recording.setframerate(16_000)
-                recording.writeframes(b"\x00\x00\xff\x7f")
-            model = partial(_transcribe_cohere, native_model)
-            text = model(path, Settings(language="fr-FR"))
-
-        self.assertEqual(text, "Bonjour")
-        pcm = session.run.call_args.args[0]
-        self.assertEqual(len(pcm), 2)
-        self.assertEqual(session.run.call_args.kwargs, {"language": "fr", "timestamps": "none"})
-
-    @patch("voicecommander.local_asr._ensure_file", return_value=Path("cohere.gguf"))
-    def test_cohere_uses_the_native_transcribe_cpp_runtime(self, ensure: Mock) -> None:
-        transcribe_cpp = Mock()
-        with patch.dict(modules, {"transcribe_cpp": transcribe_cpp}):
-            model = _load_cohere()
-
-        self.assertTrue(callable(model))
-        ensure.assert_called_once()
-        transcribe_cpp.Model.assert_called_once_with("cohere.gguf", backend="auto")
-        self.assertEqual(
-            COHERE_MODEL_SHA256,
-            "14d02f1ad6dd77b3a60f82639879012c3adb4fe25c50a5a47a2c4c661daf1558",
-        )
-
     def test_settings_round_trip_without_secrets(self) -> None:
         settings = Settings(
             hotkey="f9",
@@ -368,11 +161,23 @@ class EssentialTests(unittest.TestCase):
             path.write_text('language = "de-DE"\n', encoding="utf-8")
             self.assertEqual(load_settings(path).language, "de-DE")
 
-    def test_removed_large_turbo_setting_migrates_to_small(self) -> None:
+    def test_removed_local_models_migrate_to_whisper(self) -> None:
+        migrations = {
+            "large-v3-turbo": "small",
+            "parakeet-tdt-v3": "base",
+            "parakeet-tdt-v2": "base",
+            "parakeet-flash": "base",
+            "nemotron-3.5": "base",
+            "cohere-transcribe": "base",
+        }
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
-            path.write_text('local_asr_model = "large-v3-turbo"\n', encoding="utf-8")
-            self.assertEqual(load_settings(path).local_asr_model, "small")
+            for old, new in migrations.items():
+                with self.subTest(old):
+                    path.write_text(
+                        f'local_asr_model = "{old}"\n', encoding="utf-8"
+                    )
+                    self.assertEqual(load_settings(path).local_asr_model, new)
 
     def test_settings_reject_unsupported_asr_options(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid language"):
@@ -380,13 +185,17 @@ class EssentialTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
             validate(Settings(openrouter_asr_model="custom/transcriber"))
         validate(Settings(local_asr_model="tiny"))
-        validate(Settings(local_asr_model="parakeet-tdt-v3"))
-        validate(Settings(local_asr_model="parakeet-tdt-v2"))
-        validate(Settings(local_asr_model="parakeet-flash"))
-        validate(Settings(local_asr_model="nemotron-3.5"))
-        validate(Settings(local_asr_model="cohere-transcribe"))
-        with self.assertRaisesRegex(ValueError, "Invalid local ASR model"):
-            validate(Settings(local_asr_model="nemotron"))
+        for name in (
+            "parakeet-tdt-v3",
+            "parakeet-tdt-v2",
+            "parakeet-flash",
+            "nemotron-3.5",
+            "cohere-transcribe",
+        ):
+            with self.subTest(name), self.assertRaisesRegex(
+                ValueError, "Invalid local ASR model"
+            ):
+                validate(Settings(local_asr_model=name))
         with self.assertRaisesRegex(ValueError, "at most 500 characters"):
             validate(Settings(vocabulary="x" * 501))
         with self.assertRaisesRegex(ValueError, "hotkeys must be different"):

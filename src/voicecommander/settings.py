@@ -28,12 +28,15 @@ WHISPER_MODELS = {
     "base": ("ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"),
     "small": ("ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"),
 }
-ONNX_PARAKEET_MODELS = ("parakeet-tdt-v3", "parakeet-tdt-v2")
-PARAKEET_CPP_MODELS = ("parakeet-flash", "nemotron-3.5")
-COHERE_MODELS = ("cohere-transcribe",)
-PARAKEET_MODELS = (*ONNX_PARAKEET_MODELS, *PARAKEET_CPP_MODELS)
-LOCAL_ASR_MODELS = (*WHISPER_MODELS, *PARAKEET_MODELS, *COHERE_MODELS)
-LOCAL_MODEL_MIGRATIONS = {"large-v3-turbo": "small"}
+LOCAL_ASR_MODELS = tuple(WHISPER_MODELS)
+LOCAL_MODEL_MIGRATIONS = {
+    "large-v3-turbo": "small",
+    "parakeet-tdt-v3": "base",
+    "parakeet-tdt-v2": "base",
+    "parakeet-flash": "base",
+    "nemotron-3.5": "base",
+    "cohere-transcribe": "base",
+}
 LANGUAGES = {
     "Automatic": "auto",
     "English": "en-US",
