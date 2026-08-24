@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
+    FinalTranscript,
     WHISPER_RUNTIME_SHA256,
     _ensure_whisper,
     _transcribe_whisper,
@@ -38,6 +39,35 @@ class EssentialTests(unittest.TestCase):
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
             load_local_model("nemotron")
+
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="Hello")
+    @patch("voicecommander.local_asr._ensure_whisper")
+    def test_whisper_starts_a_final_only_session(self, ensure: Mock, transcribe: Mock) -> None:
+        ensure.return_value = Path("whisper-cli.exe"), Path("model.bin")
+        settings = Settings(language="de-DE")
+
+        session = load_local_model("base").start(settings)
+
+        self.assertIsNone(session.feed(b"partial audio"))
+        self.assertEqual(session.finish(Path("recording.wav")), FinalTranscript("Hello"))
+        transcribe.assert_called_once_with(
+            Path("whisper-cli.exe"), Path("model.bin"), Path("recording.wav"), settings
+        )
+
+    def test_local_pipeline_refines_only_the_final_transcript(self) -> None:
+        settings = Settings(postprocess_strength=50)
+        engine = Mock()
+        engine.start.return_value.finish.return_value = FinalTranscript("raw transcript")
+
+        with patch(
+            "voicecommander.pipeline.postprocess_openrouter", return_value="edited transcript"
+        ) as postprocess:
+            result = run_pipeline(Path("recording.wav"), settings, engine, "secret")
+
+        self.assertEqual(result, "edited transcript")
+        engine.start.assert_called_once_with(settings)
+        engine.start.return_value.finish.assert_called_once_with(Path("recording.wav"))
+        postprocess.assert_called_once_with("raw transcript", settings, "secret")
 
     @patch("voicecommander.local_asr._download")
     def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
@@ -229,7 +259,7 @@ class EssentialTests(unittest.TestCase):
         settings = Settings(asr_provider="openrouter", postprocess_strength=50)
 
         with (
-            patch("voicecommander.pipeline.transcribe", return_value="raw transcript"),
+            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw transcript")),
             patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 side_effect=RuntimeError("cloud unavailable"),
@@ -270,7 +300,7 @@ class EssentialTests(unittest.TestCase):
 
     def test_markdown_mode_postprocesses_even_when_editing_is_off(self) -> None:
         with (
-            patch("voicecommander.pipeline.transcribe", return_value="raw description"),
+            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw description")),
             patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 return_value="# Finished",
@@ -290,7 +320,7 @@ class EssentialTests(unittest.TestCase):
 
     def test_markdown_mode_does_not_paste_raw_instructions_on_failure(self) -> None:
         with (
-            patch("voicecommander.pipeline.transcribe", return_value="raw description"),
+            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw description")),
             patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 side_effect=RuntimeError("cloud unavailable"),
@@ -382,7 +412,7 @@ class EssentialTests(unittest.TestCase):
 
     def test_zero_editing_strength_keeps_raw_transcript(self) -> None:
         with (
-            patch("voicecommander.pipeline.transcribe", return_value="raw transcript"),
+            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw transcript")),
             patch("voicecommander.pipeline.postprocess_openrouter") as postprocess,
         ):
             result = run_pipeline(

@@ -9,9 +9,9 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
-from functools import partial
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Protocol
 from urllib.request import urlopen
 
 from .settings import APP_DIR, WHISPER_MODELS, WHISPER_REVISION, Settings
@@ -22,7 +22,51 @@ WHISPER_RUNTIME_URL = (
 )
 WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 logger = logging.getLogger(__name__)
-LocalModel = Callable[[Path, Settings], str]
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptUpdate:
+    stable: str = ""
+    tentative: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class FinalTranscript:
+    text: str
+
+
+class AsrSession(Protocol):
+    def feed(self, pcm16: bytes) -> TranscriptUpdate | None: ...
+
+    def finish(self, path: Path) -> FinalTranscript: ...
+
+
+class LocalAsrEngine(Protocol):
+    def start(self, settings: Settings) -> AsrSession: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _WhisperSession:
+    executable: Path
+    model: Path
+    settings: Settings
+
+    def feed(self, pcm16: bytes) -> None:
+        return None
+
+    def finish(self, path: Path) -> FinalTranscript:
+        return FinalTranscript(
+            _transcribe_whisper(self.executable, self.model, path, self.settings)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _WhisperEngine:
+    executable: Path
+    model: Path
+
+    def start(self, settings: Settings) -> AsrSession:
+        return _WhisperSession(self.executable, self.model, settings)
 
 
 def _download(url: str, destination: Path, expected_sha256: str) -> None:
@@ -158,9 +202,9 @@ def _transcribe_whisper(
     return _transcript(text)
 
 
-def load_local_model(local_asr_model: str = "base") -> LocalModel:
+def load_local_model(local_asr_model: str = "base") -> LocalAsrEngine:
     if local_asr_model in WHISPER_MODELS:
         executable, model = _ensure_whisper(local_asr_model)
         logger.info("Loaded multilingual Whisper model %s", model)
-        return partial(_transcribe_whisper, executable, model)
+        return _WhisperEngine(executable, model)
     raise RuntimeError(f"Unsupported local ASR model: {local_asr_model}")

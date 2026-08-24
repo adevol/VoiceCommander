@@ -13,7 +13,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from .audio import Recorder
-from .local_asr import LocalModel, load_local_model
+from .local_asr import LocalAsrEngine, load_local_model
 from .pipeline import run_pipeline
 from .settings import APP_DIR, Settings, get_api_key, show_settings
 
@@ -55,7 +55,7 @@ def deliver_text(text: str) -> None:
 def complete_recording(
     path: Path,
     settings: Settings,
-    loaded_model: LocalModel | None,
+    loaded_model: LocalAsrEngine | None,
     api_key: str,
     markdown: bool = False,
 ) -> str:
@@ -94,7 +94,7 @@ class VoiceCommander:
         self._settings_requested = threading.Event()
         self._local_model = self._load_model(settings)
 
-    def _load_model(self, settings: Settings) -> Future[LocalModel] | None:
+    def _load_model(self, settings: Settings) -> Future[LocalAsrEngine] | None:
         if settings.asr_provider != "local":
             return None
         return self.executor.submit(load_local_model, settings.local_asr_model)
