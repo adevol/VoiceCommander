@@ -3,10 +3,9 @@
 Press a key, talk, then press it again. VoiceCommander types the result wherever
 your cursor is.
 
-It is a local-first Windows dictation tool with Whisper, Parakeet, Nemotron,
-and Cohere models. Your computer handles transcription by default. If you want
-cleaner prose or structured Markdown, an optional OpenRouter step works on the
-finished text.
+It is a local-first Windows dictation tool with multilingual Whisper models.
+Your computer handles transcription by default. If you want cleaner prose or
+structured Markdown, an optional OpenRouter step works on the finished text.
 
 ## Use it
 
@@ -20,34 +19,32 @@ New configurations detect the spoken language automatically. You can force a
 language in settings when detection needs a hint. Existing language choices are
 not reset.
 
-```mermaid
-flowchart LR
-    A[Press hotkey] --> B[Talk]
-    B --> C[Press again]
-    C --> D[Text appears]
-```
-
 Installed builds start quietly when you sign in, so the hotkeys are ready
 without opening the application.
 
 ## Where your data goes
 
-The normal path stays local until you choose cloud post-processing. Your audio
-goes to the selected model on your computer. OpenRouter receives only the
-resulting text when you ask it to clean up prose or produce Markdown.
+Each recording becomes a temporary WAV file. By default, one local ASR session
+turns it into a final transcript, which VoiceCommander pastes once.
 
 ```mermaid
 flowchart LR
-    A[Recorded audio] --> B[Local speech model]
-    B --> C[Transcript]
-    C --> D[Paste once]
-    C -. Optional cleanup .-> E[OpenRouter text model]
-    E --> D
+    A[Microphone] --> B[Temporary WAV]
+    B -->|Default| C[Local ASR session]
+    B -. Cloud transcription .-> D[OpenRouter audio model]
+    C --> E[Final transcript]
+    D --> E
+    E --> F[Paste once]
+    E -. Optional cleanup as text .-> G[OpenRouter text model]
+    G --> F
 ```
 
-Cloud transcription is available as an explicit alternative to local models.
-That setting sends recorded audio to OpenRouter. Editing and Markdown send
-transcript text instead. Every cloud request sets
+The solid route is local and is the default. Cloud transcription is an explicit
+alternative that sends the WAV file to OpenRouter. Editing and Markdown send
+only the final transcript. The current Whisper backend produces that result
+after recording stops; live microphone text is not available yet.
+
+Every cloud request sets
 [`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),
 which restricts routing to providers OpenRouter identifies as non-collecting.
 OpenRouter still processes the request and records request metadata under its
@@ -58,24 +55,19 @@ configuration file. During development, `OPENROUTER_API_KEY` takes precedence.
 
 ## Pick a local model
 
-Models download only when selected. Model files and native runtimes are pinned
-and verified. On Windows, Parakeet Flash and Nemotron use Vulkan, Cohere chooses
-Vulkan automatically, and Parakeet TDT uses DirectML. Each path retains CPU
-execution for unsupported work or failed GPU initialization.
+Models download only when selected. Model files and the native whisper.cpp
+runtime are pinned and verified.
 
-| Model | Download | Measured speed | Trade-off |
+| Model | Download | Short-command latency | Trade-off |
 | --- | ---: | ---: | --- |
 | `tiny` | 31 MiB | Not measured yet | Smallest model; favors speed over accuracy |
-| `base` | 57 MiB | ~15x | Default and fast |
-| `small` | 181 MiB | ~5x | Better recognition while remaining faster than speech |
-| `parakeet-tdt-v3` | ~640 MiB | Not measured yet | Automatic detection across 25 European languages |
-| `parakeet-tdt-v2` | ~630 MiB | Not measured yet | Higher-accuracy English-only Parakeet |
-| `parakeet-flash` | ~123 MiB | Not measured yet | Small, streaming-ready, English only; no punctuation |
-| `nemotron-3.5` | ~685 MiB | Not measured yet | Streaming-ready with automatic detection across 40 locales |
-| `cohere-transcribe` | ~1.65 GiB | Not measured yet | Heavy multilingual model; choose its language for best results |
+| `base` | 57 MiB | 1.04 s | Default and fast |
+| `small` | 181 MiB | 3.31 s | Better recognition, but slow for short commands |
 
-The measured speeds come from an 8-thread Ryzen laptop. A speed of 5x means five
-seconds of audio takes about one second to transcribe.
+Latency is the end-to-end median of five runs after one warm-up on
+[FluidVoice's 1.16-second speech fixture](https://github.com/altic-dev/FluidVoice/blob/6f0684e694828b44fc643b7373f2a22d1e24eafa/Tests/FluidDictationIntegrationTests/Resources/dictation_fixture.wav)
+and an 8-thread Ryzen laptop. It includes the CLI and model startup paid by each
+dictation. Lower is better.
 
 ## Optional cloud post-processing
 
@@ -84,8 +76,7 @@ send the text to the selected OpenRouter model. You can say commands such as
 "scratch that", "new paragraph", and "bullet point" instead of editing by hand.
 
 Whisper and cloud editing can use names and technical terms from Custom
-vocabulary. The other local models do not currently support this hint. Separate
-terms with commas:
+vocabulary. Separate terms with commas:
 
 ```text
 Kubernetes, Postgres, Aleksandr
@@ -118,6 +109,7 @@ uv sync
 uv run voicecommander --settings
 uv run voicecommander
 uv run python -m unittest discover -s tests
+uv run python scripts/benchmark_asr.py recording.wav --model base
 ```
 
 Install Inno Setup, then build the installer:
