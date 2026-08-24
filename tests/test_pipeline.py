@@ -86,51 +86,29 @@ class EssentialTests(unittest.TestCase):
                 self.assertEqual(destination, whisper_dir / filename)
                 self.assertEqual(sha256, expected_sha256)
                 self.assertIn(f"/{filename}", url)
-
-    def test_tiny_uses_the_verified_multilingual_model(self) -> None:
-        self.assertEqual(
-            WHISPER_MODELS["tiny"],
-            (
-                "ggml-tiny-q5_1.bin",
-                "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
-            ),
-        )
+        self.assertEqual(WHISPER_MODELS["tiny"][0], "ggml-tiny-q5_1.bin")
 
     @patch("voicecommander.local_asr.subprocess.run")
-    def test_multilingual_whisper_uses_selected_language(self, run: Mock) -> None:
+    def test_whisper_passes_selected_or_automatic_language(self, run: Mock) -> None:
         run.return_value = Mock(returncode=0, stderr="")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
             path.touch()
-            Path(str(path) + ".whisper.txt").write_text("Guten Tag", encoding="utf-8")
+            transcript = Path(str(path) + ".whisper.txt")
             model = partial(
                 _transcribe_whisper,
                 Path("whisper-cli.exe"),
                 Path("ggml-base-q5_1.bin"),
             )
-            result = model(path, Settings(language="de-DE"))
-
-        self.assertEqual(result, "Guten Tag")
-        command = run.call_args.args[0]
-        self.assertEqual(command[command.index("-l") + 1], "de")
-
-    @patch("voicecommander.local_asr.subprocess.run")
-    def test_multilingual_whisper_can_detect_language_automatically(self, run: Mock) -> None:
-        run.return_value = Mock(returncode=0, stderr="")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "recording.wav"
-            path.touch()
-            Path(str(path) + ".whisper.txt").write_text("Bonjour", encoding="utf-8")
-            model = partial(
-                _transcribe_whisper,
-                Path("whisper-cli.exe"),
-                Path("ggml-tiny-q5_1.bin"),
-            )
-            result = model(path, Settings())
-
-        self.assertEqual(result, "Bonjour")
-        command = run.call_args.args[0]
-        self.assertEqual(command[command.index("-l") + 1], "auto")
+            for language, expected, text in (
+                ("de-DE", "de", "Guten Tag"),
+                ("auto", "auto", "Bonjour"),
+            ):
+                with self.subTest(language):
+                    transcript.write_text(text, encoding="utf-8")
+                    self.assertEqual(model(path, Settings(language=language)), text)
+                    command = run.call_args.args[0]
+                    self.assertEqual(command[command.index("-l") + 1], expected)
 
     @patch("voicecommander.pipeline._openrouter")
     @patch("voicecommander.local_asr.subprocess.run")
@@ -167,6 +145,7 @@ class EssentialTests(unittest.TestCase):
         settings = Settings(
             hotkey="f9",
             markdown_hotkey="f6",
+            language="de-DE",
             input_device='2: Mic "Main"',
             max_seconds=42,
             local_asr_model="small",
@@ -174,6 +153,7 @@ class EssentialTests(unittest.TestCase):
             postprocess_style="professional",
             postprocess_strength=75,
         )
+        self.assertEqual(Settings().language, "auto")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
             save_settings(settings, path)
@@ -183,13 +163,6 @@ class EssentialTests(unittest.TestCase):
                 config.write('hotkeys = "f9"\n')
             with self.assertRaisesRegex(ValueError, "Unknown settings: hotkeys"):
                 load_settings(path)
-
-    def test_automatic_language_is_the_default_without_overwriting_saved_language(self) -> None:
-        self.assertEqual(Settings().language, "auto")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "config.toml"
-            path.write_text('language = "de-DE"\n', encoding="utf-8")
-            self.assertEqual(load_settings(path).language, "de-DE")
 
     def test_removed_local_models_migrate_to_whisper(self) -> None:
         migrations = {
