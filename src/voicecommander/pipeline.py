@@ -8,7 +8,7 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .local_asr import FinalTranscript, LocalAsrEngine
+from .local_asr import LocalAsrEngine
 from .settings import POSTPROCESS_STYLES, Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
@@ -118,19 +118,6 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
     return _message_text(_openrouter("/chat/completions", api_key, payload), "transcript")
 
 
-def transcribe(
-    path: Path,
-    settings: Settings,
-    loaded_model: LocalAsrEngine | None,
-    api_key: str,
-) -> FinalTranscript:
-    if settings.asr_provider == "local":
-        if loaded_model is None:
-            raise RuntimeError("Local ASR model is not loaded")
-        return loaded_model.start(settings).finish(path)
-    return FinalTranscript(transcribe_openrouter(path, settings, api_key))
-
-
 def _strength_instruction(strength: int) -> str:
     """Turn the editing-strength slider into an instruction.
 
@@ -227,7 +214,12 @@ def run_pipeline(
     api_key: str,
     markdown: bool = False,
 ) -> str:
-    raw = transcribe(path, settings, loaded_model, api_key).text
+    if settings.asr_provider == "local":
+        if loaded_model is None:
+            raise RuntimeError("Local ASR model is not loaded")
+        raw = loaded_model.start(settings).finish(path)
+    else:
+        raw = transcribe_openrouter(path, settings, api_key)
     if markdown:
         return postprocess_openrouter(raw, settings, api_key, markdown=True)
     if settings.postprocess_strength == 0:

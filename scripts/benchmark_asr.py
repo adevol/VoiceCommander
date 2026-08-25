@@ -10,11 +10,20 @@ from voicecommander.local_asr import load_local_model
 from voicecommander.settings import LOCAL_ASR_MODELS, Settings
 
 
-def audio_seconds(path: Path) -> float:
+def read_audio(path: Path) -> tuple[float, bytes]:
     try:
         with wave.open(str(path), "rb") as recording:
-            return recording.getnframes() / recording.getframerate()
-    except (OSError, wave.Error, ZeroDivisionError) as error:
+            if (
+                recording.getframerate() != 16_000
+                or recording.getnchannels() != 1
+                or recording.getsampwidth() != 2
+            ):
+                raise ValueError("audio must be 16 kHz mono 16-bit PCM")
+            return (
+                recording.getnframes() / recording.getframerate(),
+                recording.readframes(recording.getnframes()),
+            )
+    except (OSError, wave.Error) as error:
         raise ValueError(f"Could not read WAV duration: {error}") from error
 
 
@@ -25,31 +34,50 @@ def main() -> int:
     parser.add_argument("--language", default="auto")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--preview", action="store_true", help="benchmark the warm preview server")
     args = parser.parse_args()
 
     if args.warmup < 0 or args.runs < 1:
         parser.error("--warmup must be non-negative and --runs must be positive")
-    duration = audio_seconds(args.audio)
+    duration, pcm16 = read_audio(args.audio)
     settings = Settings(local_asr_model=args.model, language=args.language)
 
     started = perf_counter()
     model = load_local_model(args.model)
     load_seconds = perf_counter() - started
 
-    for _ in range(args.warmup):
-        model.start(settings).finish(args.audio)
+    session = model.start(settings)
 
-    timings = []
+    def run_once() -> str:
+        result = session.feed(pcm16) if args.preview else session.finish(args.audio)
+        if result is None:
+            raise RuntimeError("Preview request was dropped")
+        return result.tentative if args.preview else result
+
+    first_preview = None
     transcript = ""
-    for _ in range(args.runs):
-        started = perf_counter()
-        transcript = model.start(settings).finish(args.audio).text
-        timings.append(perf_counter() - started)
+    try:
+        if args.preview:
+            started = perf_counter()
+            transcript = run_once()
+            first_preview = perf_counter() - started
+        for _ in range(args.warmup):
+            run_once()
+        timings = []
+        for _ in range(args.runs):
+            started = perf_counter()
+            transcript = run_once()
+            timings.append(perf_counter() - started)
+    finally:
+        model.close()
 
     middle = median(timings)
     print(f"model:      {args.model}")
+    print(f"mode:       {'preview' if args.preview else 'final'}")
     print(f"audio:      {duration:.2f} s")
     print(f"load:       {load_seconds:.3f} s")
+    if first_preview is not None:
+        print(f"first:      {first_preview:.3f} s")
     print(f"runs:       {', '.join(f'{value:.3f} s' for value in timings)}")
     print(f"median:     {middle:.3f} s")
     print(f"speed:      {duration / middle:.1f}x realtime")

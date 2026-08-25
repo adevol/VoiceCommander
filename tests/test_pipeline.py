@@ -14,7 +14,7 @@ from urllib.error import HTTPError
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
-    FinalTranscript,
+    TranscriptUpdate,
     WHISPER_RUNTIME_SHA256,
     _ensure_whisper,
     _transcribe_whisper,
@@ -40,24 +40,72 @@ class EssentialTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
             load_local_model("nemotron")
 
+    @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="Hello")
     @patch("voicecommander.local_asr._ensure_whisper")
-    def test_whisper_starts_a_final_only_session(self, ensure: Mock, transcribe: Mock) -> None:
-        ensure.return_value = Path("whisper-cli.exe"), Path("model.bin")
+    def test_whisper_session_previews_then_finishes_authoritatively(
+        self, ensure: Mock, transcribe: Mock, start_server: Mock
+    ) -> None:
+        ensure.return_value = (
+            Path("whisper-cli.exe"),
+            Path("whisper-server.exe"),
+            Path("model.bin"),
+        )
+        server = start_server.return_value
+        server.transcribe.return_value = "Hallo"
         settings = Settings(language="de-DE")
 
-        session = load_local_model("base").start(settings)
+        engine = load_local_model("base")
+        session = engine.start(settings)
 
-        self.assertIsNone(session.feed(b"partial audio"))
-        self.assertEqual(session.finish(Path("recording.wav")), FinalTranscript("Hello"))
+        start_server.assert_not_called()
+        self.assertEqual(
+            session.feed(b"partial audio"),
+            TranscriptUpdate(tentative="Hallo"),
+        )
+        self.assertEqual(session.finish(Path("recording.wav")), "Hello")
+        start_server.assert_called_once_with(Path("whisper-server.exe"), Path("model.bin"))
+        server.transcribe.assert_called_once_with(b"partial audio", settings)
         transcribe.assert_called_once_with(
             Path("whisper-cli.exe"), Path("model.bin"), Path("recording.wav"), settings
         )
+        engine.close()
+        server.close.assert_called_once_with()
+
+    @patch("voicecommander.local_asr._start_whisper_server")
+    @patch("voicecommander.local_asr._ensure_whisper")
+    def test_whisper_preview_drops_concurrent_requests(
+        self, ensure: Mock, start_server: Mock
+    ) -> None:
+        ensure.return_value = Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        entered = threading.Event()
+        release = threading.Event()
+
+        def transcribe(data: bytes, settings: Settings) -> str:
+            entered.set()
+            release.wait(1)
+            return "first"
+
+        start_server.return_value.transcribe.side_effect = transcribe
+        engine = load_local_model("base")
+        results = []
+        worker = threading.Thread(
+            target=lambda: results.append(engine.start(Settings()).feed(b"first"))
+        )
+        worker.start()
+        self.assertTrue(entered.wait(1))
+
+        self.assertIsNone(engine.start(Settings()).feed(b"newest"))
+
+        release.set()
+        worker.join(1)
+        self.assertEqual(results, [TranscriptUpdate(tentative="first")])
+        engine.close()
 
     def test_local_pipeline_refines_only_the_final_transcript(self) -> None:
         settings = Settings(postprocess_strength=50)
         engine = Mock()
-        engine.start.return_value.finish.return_value = FinalTranscript("raw transcript")
+        engine.start.return_value.finish.return_value = "raw transcript"
 
         with patch(
             "voicecommander.pipeline.postprocess_openrouter", return_value="edited transcript"
@@ -74,14 +122,21 @@ class EssentialTests(unittest.TestCase):
         for name, (filename, expected_sha256) in WHISPER_MODELS.items():
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
                 whisper_dir = Path(directory)
-                (whisper_dir / "whisper-cli.exe").touch()
+                for runtime_file in (
+                    "whisper-cli.exe",
+                    "whisper-server.exe",
+                    "whisper.dll",
+                    "ggml.dll",
+                ):
+                    (whisper_dir / runtime_file).touch()
                 (whisper_dir / f".runtime-{WHISPER_RUNTIME_SHA256}").touch()
                 download.reset_mock()
 
                 with patch("voicecommander.local_asr.WHISPER_DIR", whisper_dir):
-                    _, model = _ensure_whisper(name)
+                    _, server, model = _ensure_whisper(name)
 
                 url, destination, sha256 = download.call_args.args
+                self.assertEqual(server.name, "whisper-server.exe")
                 self.assertEqual(model.name, filename)
                 self.assertEqual(destination, whisper_dir / filename)
                 self.assertEqual(sha256, expected_sha256)
@@ -232,7 +287,10 @@ class EssentialTests(unittest.TestCase):
         settings = Settings(asr_provider="openrouter", postprocess_strength=50)
 
         with (
-            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw transcript")),
+            patch(
+                "voicecommander.pipeline.transcribe_openrouter",
+                return_value="raw transcript",
+            ),
             patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 side_effect=RuntimeError("cloud unavailable"),
@@ -272,8 +330,12 @@ class EssentialTests(unittest.TestCase):
         self.assertIn("without commentary", prompt)
 
     def test_markdown_mode_postprocesses_even_when_editing_is_off(self) -> None:
+        settings = Settings(asr_provider="openrouter", postprocess_strength=0)
         with (
-            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw description")),
+            patch(
+                "voicecommander.pipeline.transcribe_openrouter",
+                return_value="raw description",
+            ),
             patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 return_value="# Finished",
@@ -281,19 +343,23 @@ class EssentialTests(unittest.TestCase):
         ):
             result = run_pipeline(
                 Path("recording.wav"),
-                Settings(postprocess_strength=0),
+                settings,
                 None,
                 "secret",
                 markdown=True,
             )
         self.assertEqual(result, "# Finished")
         postprocess.assert_called_once_with(
-            "raw description", Settings(postprocess_strength=0), "secret", markdown=True
+            "raw description", settings, "secret", markdown=True
         )
 
     def test_markdown_mode_does_not_paste_raw_instructions_on_failure(self) -> None:
+        settings = Settings(asr_provider="openrouter", postprocess_strength=0)
         with (
-            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw description")),
+            patch(
+                "voicecommander.pipeline.transcribe_openrouter",
+                return_value="raw description",
+            ),
             patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 side_effect=RuntimeError("cloud unavailable"),
@@ -302,7 +368,7 @@ class EssentialTests(unittest.TestCase):
         ):
             run_pipeline(
                 Path("recording.wav"),
-                Settings(postprocess_strength=0),
+                settings,
                 None,
                 "secret",
                 markdown=True,
@@ -384,13 +450,17 @@ class EssentialTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 2)
 
     def test_zero_editing_strength_keeps_raw_transcript(self) -> None:
+        settings = Settings(asr_provider="openrouter", postprocess_strength=0)
         with (
-            patch("voicecommander.pipeline.transcribe", return_value=FinalTranscript("raw transcript")),
+            patch(
+                "voicecommander.pipeline.transcribe_openrouter",
+                return_value="raw transcript",
+            ),
             patch("voicecommander.pipeline.postprocess_openrouter") as postprocess,
         ):
             result = run_pipeline(
                 Path("recording.wav"),
-                Settings(postprocess_strength=0),
+                settings,
                 None,
                 "secret",
             )
