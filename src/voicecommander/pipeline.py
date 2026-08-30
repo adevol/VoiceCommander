@@ -9,7 +9,8 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .local_asr import LocalAsrEngine
-from .settings import POSTPROCESS_STYLES, Settings
+from .prompts import postprocess_prompt
+from .settings import Settings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 logger = logging.getLogger(__name__)
@@ -92,63 +93,16 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
     return _message_text(_openrouter("/chat/completions", api_key, payload), "transcript")
 
 
-def _strength_instruction(strength: int) -> str:
-    if strength <= 25:
-        return "Only fix punctuation and obvious mis-hearings; keep the wording exactly as spoken."
-    if strength <= 75:
-        return "Lightly clean up the text, keeping the speaker's wording and sentence order."
-    return "Rewrite freely for clarity while preserving the meaning."
-
-
 def postprocess_openrouter(
     text: str,
     settings: Settings,
     api_key: str,
     markdown: bool = False,
 ) -> str:
-    number_format_rule = (
-        "Write numbers, dates, and times naturally for the language of the dictated text."
-        if settings.language == "auto"
-        else f"Write numbers, dates, and times naturally for the {settings.language} locale."
-    )
-    if markdown:
-        rules = [
-            "Turn this dictated description into the finished Markdown content the speaker intends;"
-            " do not merely transcribe the description.",
-            "Use valid, conventional Markdown with paragraphs, headings, lists, blockquotes, tables,"
-            " and code blocks when the requested content calls for them.",
-            "Interpret spoken layout and hierarchy instructions instead of including those instructions"
-            " in the result.",
-            "Format mathematical expressions as LaTeX: use $...$ for inline math and $$...$$ for"
-            " display math.",
-            "Preserve the speaker's meaning and supplied facts; do not invent content.",
-            f"Style: {POSTPROCESS_STYLES[settings.postprocess_style]}",
-            "Reply in the language of the dictated text.",
-            'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
-            " or restarts a phrase, keep only the corrected version and never write the command itself.",
-            number_format_rule,
-            "Return only raw Markdown, without commentary or an outer Markdown code fence.",
-        ]
-    else:
-        rules = [
-            "Edit this dictated text without changing its meaning or adding information.",
-            _strength_instruction(settings.postprocess_strength),
-            f"Style: {POSTPROCESS_STYLES[settings.postprocess_style]}",
-            "Reply in the language of the dictated text.",
-            'Apply spoken self-corrections: when the speaker says "scratch that" or "correction"'
-            " or restarts a phrase, keep only the corrected version and never write the command itself.",
-            'Convert spoken commands ("new paragraph", "bullet point", "quote ... unquote") and'
-            " formatting cues into paragraphs, bullets, numbered lists, and punctuation.",
-            number_format_rule,
-            "Return only the finished text.",
-        ]
-    if settings.vocabulary:
-        rules.insert(2, f"Keep these terms exactly as spelled here: {settings.vocabulary}")
-    prompt = "\n".join(rules)
     payload = {
         "model": settings.postprocess_model,
         "messages": [
-            {"role": "system", "content": prompt},
+            {"role": "system", "content": postprocess_prompt(settings, markdown)},
             {"role": "user", "content": text},
         ],
         "temperature": 0,
