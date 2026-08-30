@@ -3,7 +3,6 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 uv sync --group build
 uv run python -m unittest discover -s tests
-uv build
 uv run python -m PyInstaller --clean --noconfirm voicecommander.spec
 
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
