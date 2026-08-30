@@ -278,12 +278,17 @@ class VoiceCommander:
         self._register_hotkeys(keyboard)
         logger.info("VoiceCommander ready")
         _beep(1000)
+
+        def poll() -> None:
+            if self._settings_requested.is_set():
+                self._settings_requested.clear()
+                self._show_settings(overlay.root)
+            overlay.pump(self._preview_updates)
+            overlay.root.after(100, poll)
+
         try:
-            while True:
-                if self._settings_requested.wait(0.1):
-                    self._settings_requested.clear()
-                    self._show_settings(overlay.root)
-                overlay.pump(self._preview_updates)
+            overlay.root.after(0, poll)
+            overlay.root.mainloop()
         except KeyboardInterrupt:
             logger.info("VoiceCommander stopped")
         finally:

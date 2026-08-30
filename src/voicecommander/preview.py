@@ -69,7 +69,6 @@ class PreviewOverlay:
             self.root.geometry(f"{width}x{height}+{x}+28")
             self.root.deiconify()
             self.root.lift()
-        self.root.update()
 
     def close(self) -> None:
         self.root.destroy()

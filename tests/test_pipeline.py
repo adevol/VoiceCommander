@@ -37,6 +37,14 @@ from voicecommander.settings import (
 )
 
 
+def run_first_tk_poll(root: Mock) -> None:
+    def mainloop() -> None:
+        root.after.call_args.args[1]()
+        raise KeyboardInterrupt
+
+    root.mainloop.side_effect = mainloop
+
+
 class VoiceCommanderTests(unittest.TestCase):
     def test_recorder_snapshot_does_not_consume_final_audio(self) -> None:
         recorder = Recorder()
@@ -76,7 +84,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         tkinter.Label.return_value.configure.assert_called_once_with(text="Hello world")
         tkinter.Tk.return_value.deiconify.assert_called_once()
-        tkinter.Tk.return_value.update.assert_called_once()
+        tkinter.Tk.return_value.update.assert_not_called()
 
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
@@ -623,7 +631,8 @@ class VoiceCommanderTests(unittest.TestCase):
             patch("voicecommander.app.PreviewOverlay") as preview_type,
             patch.dict(modules, {"keyboard": keyboard}),
         ):
-            event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]
+            event_type.return_value.is_set.return_value = True
+            run_first_tk_poll(preview_type.return_value.root)
             initial = Settings(asr_provider="openrouter", hotkey="f9")
             updated = Settings(
                 asr_provider="openrouter",
@@ -655,7 +664,8 @@ class VoiceCommanderTests(unittest.TestCase):
             patch("voicecommander.app._beep"),
             patch.dict(modules, {"keyboard": keyboard, "tkinter": tkinter}),
         ):
-            event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]
+            event_type.return_value.is_set.return_value = True
+            run_first_tk_poll(tkinter.Tk.return_value)
             app = VoiceCommander(Settings(asr_provider="openrouter"))
             app.request_settings()
             app.run()
@@ -674,10 +684,11 @@ class VoiceCommanderTests(unittest.TestCase):
             patch("voicecommander.app.threading.Event") as event_type,
             patch("voicecommander.app._beep"),
             patch("voicecommander.app.show_settings") as show_settings,
-            patch("voicecommander.app.PreviewOverlay"),
+            patch("voicecommander.app.PreviewOverlay") as preview_type,
             patch.dict(modules, {"keyboard": Mock()}),
         ):
-            event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]
+            event_type.return_value.is_set.return_value = True
+            run_first_tk_poll(preview_type.return_value.root)
             show_settings.return_value = Settings(asr_provider="local")
             app = VoiceCommander(Settings(asr_provider="openrouter"))
             self.assertIsNone(app._local_model)
