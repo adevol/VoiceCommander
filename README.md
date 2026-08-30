@@ -30,6 +30,7 @@ turns it into a final transcript, which VoiceCommander pastes once.
 ```mermaid
 flowchart LR
     A[Microphone] --> B[Temporary WAV]
+    A -->|tiny or base| P[Local preview overlay]
     B -->|Default| C[Local ASR session]
     B -. Cloud transcription .-> D[OpenRouter audio model]
     C --> E[Final transcript]
@@ -41,8 +42,9 @@ flowchart LR
 
 The solid route is local and is the default. Cloud transcription is an explicit
 alternative that sends the WAV file to OpenRouter. Editing and Markdown send
-only the final transcript. The current Whisper backend produces that result
-after recording stops; live microphone text is not available yet.
+only the final transcript. Local `tiny` and `base` show tentative text while
+recording. You can disable Live local preview in settings. `small` remains
+final-only because it missed the preview latency gate.
 
 Every cloud request sets
 [`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),
@@ -58,16 +60,17 @@ configuration file. During development, `OPENROUTER_API_KEY` takes precedence.
 Models download only when selected. Model files and the native whisper.cpp
 runtime are pinned and verified.
 
-| Model | Download | Short-command latency | Trade-off |
-| --- | ---: | ---: | --- |
-| `tiny` | 31 MiB | Not measured yet | Smallest model; favors speed over accuracy |
-| `base` | 57 MiB | 1.04 s | Default and fast |
-| `small` | 181 MiB | 3.31 s | Better recognition, but slow for short commands |
+| Model | Download | Final | Warm preview | Trade-off |
+| --- | ---: | ---: | ---: | --- |
+| `tiny` | 31 MiB | Not measured yet | 0.38 s | Fastest live text; lower accuracy |
+| `base` | 57 MiB | 1.04 s | 0.81 s | Default; live preview enabled |
+| `small` | 181 MiB | 3.31 s | Disabled (2.96 s) | Better recognition; final-only |
 
 Latency is the end-to-end median of five runs after one warm-up on
 [FluidVoice's 1.16-second speech fixture](https://github.com/altic-dev/FluidVoice/blob/6f0684e694828b44fc643b7373f2a22d1e24eafa/Tests/FluidDictationIntegrationTests/Resources/dictation_fixture.wav)
-and an 8-thread Ryzen laptop. It includes the CLI and model startup paid by each
-dictation. Lower is better.
+and an 8-thread Ryzen laptop. Final timings include the CLI startup paid by each
+dictation. Preview timings use the persistent local server after its first
+request. Lower is better.
 
 ## Optional cloud post-processing
 
