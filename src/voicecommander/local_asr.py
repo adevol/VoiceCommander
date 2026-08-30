@@ -150,7 +150,6 @@ def _ensure_runtime(
 
 
 def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
-    """Return the whisper.cpp runtime and model, downloading either if absent."""
     executable = _ensure_runtime(
         WHISPER_DIR,
         "whisper-cli.exe",

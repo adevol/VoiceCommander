@@ -16,20 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 def _openrouter(path: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """POST a payload to OpenRouter.
-
-    Args:
-        path: The route to call, appended to `OPENROUTER_URL`.
-        api_key: The OpenRouter key.
-        payload: The request body, serialised as JSON.
-
-    Returns:
-        The decoded JSON response.
-
-    Raises:
-        RuntimeError: If the key is missing, the response is an HTTP error, or the
-            connection fails on both attempts.
-    """
     if not api_key:
         raise RuntimeError("OpenRouter is selected but no API key is configured")
     request = Request(
@@ -70,19 +56,6 @@ def _vocabulary_hint(vocabulary: str) -> str:
 
 
 def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
-    """Transcribe a WAV file with an OpenRouter model.
-
-    Args:
-        path: The WAV file to transcribe.
-        settings: Supplies the model, language, and custom vocabulary.
-        api_key: The OpenRouter key.
-
-    Returns:
-        The transcript, stripped of surrounding whitespace.
-
-    Raises:
-        RuntimeError: If the request fails or the reply holds no usable text.
-    """
     language_instruction = (
         "Detect the spoken language and transcribe the audio verbatim."
         if settings.language == "auto"
@@ -119,14 +92,6 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
 
 
 def _strength_instruction(strength: int) -> str:
-    """Turn the editing-strength slider into an instruction.
-
-    Args:
-        strength: The slider position, from 0 to 100.
-
-    Returns:
-        One of three instructions, for light, moderate, or free editing.
-    """
     if strength <= 25:
         return "Only fix punctuation and obvious mis-hearings; keep the wording exactly as spoken."
     if strength <= 75:
@@ -140,22 +105,6 @@ def postprocess_openrouter(
     api_key: str,
     markdown: bool = False,
 ) -> str:
-    """Edit a transcript with an OpenRouter model.
-
-    Args:
-        text: The raw transcript.
-        settings: Supplies the model, editing strength, style, language, and custom
-            vocabulary.
-        api_key: The OpenRouter key.
-        markdown: Whether to turn the dictation into finished Markdown rather than
-            lightly editing it as prose.
-
-    Returns:
-        The edited text.
-
-    Raises:
-        RuntimeError: If the request fails or the reply holds no usable text.
-    """
     number_format_rule = (
         "Write numbers, dates, and times naturally for the language of the dictated text."
         if settings.language == "auto"

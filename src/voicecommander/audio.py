@@ -41,11 +41,6 @@ class Recorder:
         self._lock = Lock()
 
     def start(self) -> None:
-        """Open the input stream and start buffering audio.
-
-        Raises:
-            RuntimeError: If a recording is already active.
-        """
         import sounddevice
 
         device = None
@@ -75,7 +70,6 @@ class Recorder:
             self._chunks.append(bytes(data))
 
     def snapshot(self) -> bytes:
-        """Copy the audio recorded so far without changing the final recording."""
         with self._lock:
             return b"".join(self._chunks)
 

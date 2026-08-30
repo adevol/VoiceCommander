@@ -168,13 +168,6 @@ def save_api_key(api_key: str) -> None:
 
 
 def _microphones() -> list[str]:
-    """List the available input devices.
-
-    Returns:
-        One "index: name" entry per input device, which `Recorder` parses the index
-        back out of, or an empty list if they cannot be queried, so that the settings
-        window still opens without an audio backend.
-    """
     try:
         import sounddevice
 
