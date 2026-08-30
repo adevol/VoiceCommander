@@ -25,11 +25,9 @@ def transcribe_live(
         pcm16 = recorder.snapshot()
         if not pcm16:
             continue
-        update = session.feed(pcm16)
-        if update is not None and not stop.is_set():
-            text = f"{update.stable} {update.tentative}".strip()
-            if text:
-                updates.put(text)
+        text = session.feed(pcm16)
+        if text and not stop.is_set():
+            updates.put(text)
 
 
 class PreviewOverlay:

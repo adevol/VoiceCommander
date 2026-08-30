@@ -32,17 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
-class TranscriptUpdate:
-    stable: str = ""
-    tentative: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class _WhisperSession:
     engine: LocalAsrEngine
     settings: Settings
 
-    def feed(self, pcm16: bytes) -> TranscriptUpdate | None:
+    def feed(self, pcm16: bytes) -> str | None:
         """Decode the latest complete 16 kHz mono PCM snapshot.
 
         A concurrent request is dropped rather than queued. The final WAV pass
@@ -70,13 +64,13 @@ class LocalAsrEngine:
     def start(self, settings: Settings) -> _WhisperSession:
         return _WhisperSession(self, settings)
 
-    def _preview(self, pcm16: bytes, settings: Settings) -> TranscriptUpdate | None:
+    def _preview(self, pcm16: bytes, settings: Settings) -> str | None:
         if not self._preview_lock.acquire(blocking=False):
             return None
         try:
             if self._server is None or self._server.process.poll() is not None:
                 self._server = _start_whisper_server(self.server_executable, self.model)
-            return TranscriptUpdate(tentative=self._server.transcribe(pcm16, settings))
+            return self._server.transcribe(pcm16, settings)
         finally:
             self._preview_lock.release()
 

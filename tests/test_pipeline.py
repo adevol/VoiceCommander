@@ -15,7 +15,6 @@ from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.audio import Recorder
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
-    TranscriptUpdate,
     WHISPER_RUNTIME_SHA256,
     _ensure_whisper,
     _transcribe_whisper,
@@ -57,7 +56,7 @@ class VoiceCommanderTests(unittest.TestCase):
         recorder = Mock()
         recorder.snapshot.return_value = b"pcm"
         session = Mock()
-        session.feed.return_value = TranscriptUpdate(stable="Hello", tentative="world")
+        session.feed.return_value = "Hello world"
         model = Mock()
         model.start.return_value = session
         stop = Mock()
@@ -111,7 +110,7 @@ class VoiceCommanderTests(unittest.TestCase):
         start_server.assert_not_called()
         self.assertEqual(
             session.feed(b"partial audio"),
-            TranscriptUpdate(tentative="Hallo"),
+            "Hallo",
         )
         self.assertEqual(session.finish(Path("recording.wav")), "Hello")
         start_server.assert_called_once_with(Path("whisper-server.exe"), Path("model.bin"))
@@ -149,7 +148,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         release.set()
         worker.join(1)
-        self.assertEqual(results, [TranscriptUpdate(tentative="first")])
+        self.assertEqual(results, ["first"])
         engine.close()
 
     def test_local_pipeline_refines_only_the_final_transcript(self) -> None:

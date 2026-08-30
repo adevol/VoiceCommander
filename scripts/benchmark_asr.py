@@ -52,7 +52,7 @@ def main() -> int:
         result = session.feed(pcm16) if args.preview else session.finish(args.audio)
         if result is None:
             raise RuntimeError("Preview request was dropped")
-        return result.tentative if args.preview else result
+        return result
 
     first_preview = None
     transcript = ""
