@@ -51,10 +51,6 @@ def _message_text(response: dict[str, Any], what: str) -> str:
     return text
 
 
-def _vocabulary_hint(vocabulary: str) -> str:
-    return f" These words may appear and are spelled like this: {vocabulary}." if vocabulary else ""
-
-
 def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
     language_instruction = (
         "Detect the spoken language and transcribe the audio verbatim."
@@ -72,7 +68,12 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
                         "text": (
                             language_instruction
                             + " Reply with the transcript only, with no commentary."
-                            + _vocabulary_hint(settings.vocabulary)
+                            + (
+                                " These words may appear and are spelled like this: "
+                                f"{settings.vocabulary}."
+                                if settings.vocabulary
+                                else ""
+                            )
                         ),
                     },
                     {

@@ -239,13 +239,6 @@ def _start_whisper_server(executable: Path, model: Path) -> _WhisperServer:
         raise
 
 
-def _transcript(text: str) -> str:
-    text = text.strip()
-    if not text:
-        raise RuntimeError("Local ASR returned an empty transcript")
-    return text
-
-
 def _whisper_language(language: str) -> str:
     return language if language == "auto" else language.split("-", 1)[0].lower()
 
@@ -286,7 +279,10 @@ def _transcribe_whisper(
         text = output_path.read_text(encoding="utf-8")
     finally:
         output_path.unlink(missing_ok=True)
-    return _transcript(text)
+    text = text.strip()
+    if not text:
+        raise RuntimeError("Local ASR returned an empty transcript")
+    return text
 
 
 def load_local_model(local_asr_model: str = "base") -> LocalAsrEngine:
