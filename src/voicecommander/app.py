@@ -101,8 +101,8 @@ class VoiceCommander:
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
         self._preview_stop = threading.Event()
+        self._preview_stop.set()
         self._preview_updates: queue.SimpleQueue[str | None] = queue.SimpleQueue()
-        self._preview_thread: threading.Thread | None = None
         self._menu_open = False
         self._markdown = False
         self._settings_requested = threading.Event()
@@ -203,10 +203,7 @@ class VoiceCommander:
             stop = threading.Event()
             self._preview_stop = stop
             self._preview_updates.put("Listening")
-            self._preview_thread = threading.Thread(
-                target=self._preview, args=(stop,), daemon=True
-            )
-            self._preview_thread.start()
+            threading.Thread(target=self._preview, args=(stop,), daemon=True).start()
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
         _beep(900)
 
@@ -229,7 +226,7 @@ class VoiceCommander:
         if self._timer:
             self._timer.cancel()
             self._timer = None
-        if self._preview_thread is not None:
+        if not self._preview_stop.is_set():
             self._preview_stop.set()
             self._preview_updates.put("Finalizing")
         try:
@@ -238,7 +235,6 @@ class VoiceCommander:
         except Exception as error:
             self._preview_stop.set()
             self._preview_updates.put(None)
-            self._preview_thread = None
             self.state = State.IDLE
             logger.exception("Could not stop recording")
             _notify("VoiceCommander", str(error), error=True)
@@ -262,8 +258,8 @@ class VoiceCommander:
             logger.exception("Pipeline failed; recording preserved at %s", path)
             _notify("VoiceCommander failed", f"{error}\n\nRecording preserved at:\n{path}", error=True)
         finally:
+            self._preview_stop.set()
             self._preview_updates.put(None)
-            self._preview_thread = None
             with self._lock:
                 self.state = State.IDLE
                 self._markdown = False
