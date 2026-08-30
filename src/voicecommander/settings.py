@@ -73,6 +73,7 @@ class Settings:
     max_seconds: int = 300
     asr_provider: str = "local"
     local_asr_model: str = "base"
+    live_preview: bool = True
     openrouter_asr_model: str = "google/gemini-2.5-flash"
     postprocess_model: str = "openai/gpt-4o-mini"
     postprocess_style: str = "clean"
@@ -186,14 +187,15 @@ def _microphones() -> list[str]:
         return []
 
 
-def show_settings(settings: Settings) -> Settings | None:
+def show_settings(settings: Settings, parent: object | None = None) -> Settings | None:
     import tkinter as tk
     from tkinter import messagebox, ttk
 
-    root = tk.Tk()
+    root = tk.Tk() if parent is None else tk.Toplevel(parent)
     root.title("VoiceCommander Settings")
     root.resizable(False, False)
     values = {field.name: tk.StringVar(value=str(getattr(settings, field.name))) for field in fields(Settings)}
+    values["live_preview"] = tk.BooleanVar(value=settings.live_preview)
     values["language"].set(
         next(name for name, code in LANGUAGES.items() if code == settings.language)
     )
@@ -230,7 +232,15 @@ def show_settings(settings: Settings) -> Settings | None:
             widget.configure(state="readonly")
         widget.grid(row=row, column=1, padx=8, pady=5, sticky="ew")
 
-    strength_row = len(rows)
+    preview_row = len(rows)
+    ttk.Label(root, text="Live local preview").grid(
+        row=preview_row, column=0, padx=8, pady=5, sticky="w"
+    )
+    ttk.Checkbutton(root, text="Show while recording", variable=values["live_preview"]).grid(
+        row=preview_row, column=1, padx=8, pady=5, sticky="w"
+    )
+
+    strength_row = preview_row + 1
     ttk.Label(root, text="Editing strength").grid(
         row=strength_row, column=0, padx=8, pady=5, sticky="w"
     )
@@ -258,6 +268,7 @@ def show_settings(settings: Settings) -> Settings | None:
             }
             raw["language"] = LANGUAGES[raw["language"]]
             raw["max_seconds"] = int(raw["max_seconds"])
+            raw["live_preview"] = bool(values["live_preview"].get())
             raw["postprocess_strength"] = int(float(raw["postprocess_strength"]))
             updated = Settings(**raw)
             entered_key = values["api_key"].get().strip()
@@ -277,5 +288,5 @@ def show_settings(settings: Settings) -> Settings | None:
     ttk.Button(buttons, text="Save", command=save).pack(side="right")
 
     root.columnconfigure(1, weight=1)
-    root.mainloop()
+    root.wait_window()
     return result

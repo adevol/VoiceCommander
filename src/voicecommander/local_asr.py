@@ -112,7 +112,7 @@ class _WhisperServer:
             raise RuntimeError(f"Whisper preview failed: {error}") from error
         if not isinstance(result, dict) or not isinstance(result.get("text"), str):
             raise RuntimeError("Whisper preview returned an invalid response")
-        return _transcript(result["text"])
+        return result["text"].strip()
 
     def close(self) -> None:
         if self.process.poll() is not None:

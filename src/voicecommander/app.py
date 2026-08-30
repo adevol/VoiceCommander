@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -15,6 +16,7 @@ from pathlib import Path
 from .audio import Recorder
 from .local_asr import LocalAsrEngine, load_local_model
 from .pipeline import run_pipeline
+from .preview import PREVIEW_MODELS, PreviewOverlay, transcribe_live
 from .settings import APP_DIR, Settings, get_api_key, show_settings
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,15 @@ class State(Enum):
     IDLE = "idle"
     RECORDING = "recording"
     PROCESSING = "processing"
+
+
+def _close_model(model: Future[LocalAsrEngine] | None) -> None:
+    if model is None:
+        return
+    if not model.done():
+        model.cancel()
+    elif not model.cancelled() and model.exception() is None:
+        model.result().close()
 
 
 def configure_logging() -> Path:
@@ -89,6 +100,9 @@ class VoiceCommander:
         self.state = State.IDLE
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
+        self._preview_stop = threading.Event()
+        self._preview_updates: queue.SimpleQueue[str | None] = queue.SimpleQueue()
+        self._preview_thread: threading.Thread | None = None
         self._menu_open = False
         self._markdown = False
         self._settings_requested = threading.Event()
@@ -127,14 +141,14 @@ class VoiceCommander:
         )
         keyboard.add_hotkey(f"ctrl+{self.settings.hotkey}", self.request_settings)
 
-    def _show_settings(self) -> None:
+    def _show_settings(self, parent: object) -> None:
         with self._lock:
             if self._menu_open or self.state is not State.IDLE:
                 return
             self._menu_open = True
         try:
             previous = self.settings
-            updated = show_settings(previous)
+            updated = show_settings(previous, parent)
             if updated is not None:
                 with self._lock:
                     self.settings = updated
@@ -147,8 +161,7 @@ class VoiceCommander:
                     or updated.local_asr_model != previous.local_asr_model
                 )
                 if model_changed:
-                    if self._local_model is not None:
-                        self._local_model.cancel()
+                    _close_model(self._local_model)
                     self._local_model = self._load_model(updated)
 
                 if (
@@ -182,18 +195,50 @@ class VoiceCommander:
         self._timer = threading.Timer(self.settings.max_seconds, self._recording_limit)
         self._timer.daemon = True
         self._timer.start()
+        if (
+            self.settings.live_preview
+            and self._local_model is not None
+            and self.settings.local_asr_model in PREVIEW_MODELS
+        ):
+            stop = threading.Event()
+            self._preview_stop = stop
+            self._preview_updates.put("Listening")
+            self._preview_thread = threading.Thread(
+                target=self._preview, args=(stop,), daemon=True
+            )
+            self._preview_thread.start()
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
         _beep(900)
+
+    def _preview(self, stop: threading.Event) -> None:
+        try:
+            transcribe_live(
+                self.recorder,
+                self._local_model.result(),
+                self.settings,
+                stop,
+                self._preview_updates,
+            )
+        except Exception as error:
+            logger.exception("Live preview failed; recording continues")
+            if not stop.is_set():
+                self._preview_updates.put(f"Preview unavailable: {error}")
 
     def _stop_recording(self) -> None:
         self.state = State.PROCESSING
         if self._timer:
             self._timer.cancel()
             self._timer = None
+        if self._preview_thread is not None:
+            self._preview_stop.set()
+            self._preview_updates.put("Finalizing")
         try:
             path = self.recorder.stop()
             self.executor.submit(self._finish, path, self._markdown)
         except Exception as error:
+            self._preview_stop.set()
+            self._preview_updates.put(None)
+            self._preview_thread = None
             self.state = State.IDLE
             logger.exception("Could not stop recording")
             _notify("VoiceCommander", str(error), error=True)
@@ -217,6 +262,8 @@ class VoiceCommander:
             logger.exception("Pipeline failed; recording preserved at %s", path)
             _notify("VoiceCommander failed", f"{error}\n\nRecording preserved at:\n{path}", error=True)
         finally:
+            self._preview_updates.put(None)
+            self._preview_thread = None
             with self._lock:
                 self.state = State.IDLE
                 self._markdown = False
@@ -224,6 +271,7 @@ class VoiceCommander:
     def run(self) -> int:
         import keyboard
 
+        overlay = PreviewOverlay()
         logger.info(
             "Starting VoiceCommander: hotkey=%s markdown_hotkey=%s asr=%s postprocess_strength=%s",
             self.settings.hotkey,
@@ -238,10 +286,16 @@ class VoiceCommander:
             while True:
                 if self._settings_requested.wait(0.1):
                     self._settings_requested.clear()
-                    self._show_settings()
+                    self._show_settings(overlay.root)
+                overlay.pump(self._preview_updates)
         except KeyboardInterrupt:
             logger.info("VoiceCommander stopped")
         finally:
+            self._preview_stop.set()
             keyboard.unhook_all_hotkeys()
-            self.executor.shutdown(wait=False, cancel_futures=True)
+            overlay.close()
+            try:
+                _close_model(self._local_model)
+            finally:
+                self.executor.shutdown(wait=False, cancel_futures=True)
         return 0

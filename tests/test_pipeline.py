@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
+from voicecommander.audio import Recorder
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
     TranscriptUpdate,
@@ -26,6 +27,7 @@ from voicecommander.pipeline import (
     run_pipeline,
     transcribe_openrouter,
 )
+from voicecommander.preview import PreviewOverlay, transcribe_live
 from voicecommander.settings import (
     WHISPER_MODELS,
     Settings,
@@ -35,7 +37,47 @@ from voicecommander.settings import (
 )
 
 
-class EssentialTests(unittest.TestCase):
+class VoiceCommanderTests(unittest.TestCase):
+    def test_recorder_snapshot_does_not_consume_final_audio(self) -> None:
+        recorder = Recorder()
+        recorder._chunks = [b"first", b"second"]
+
+        self.assertEqual(recorder.snapshot(), b"firstsecond")
+        self.assertEqual(recorder._chunks, [b"first", b"second"])
+
+    def test_live_preview_publishes_the_latest_transcript(self) -> None:
+        recorder = Mock()
+        recorder.snapshot.return_value = b"pcm"
+        session = Mock()
+        session.feed.return_value = TranscriptUpdate(stable="Hello", tentative="world")
+        model = Mock()
+        model.start.return_value = session
+        stop = Mock()
+        stop.wait.side_effect = [False, True]
+        stop.is_set.return_value = False
+        updates = queue.SimpleQueue()
+
+        transcribe_live(recorder, model, Settings(), stop, updates)
+
+        self.assertEqual(updates.get_nowait(), "Hello world")
+        session.feed.assert_called_once_with(b"pcm")
+
+    def test_preview_overlay_consumes_worker_updates(self) -> None:
+        tkinter = Mock()
+        tkinter.Tk.return_value.winfo_screenwidth.return_value = 1920
+        tkinter.Label.return_value.winfo_reqwidth.return_value = 300
+        tkinter.Label.return_value.winfo_reqheight.return_value = 40
+        updates = queue.SimpleQueue()
+        updates.put("Hello world")
+
+        with patch.dict(modules, {"tkinter": tkinter}):
+            overlay = PreviewOverlay()
+            overlay.pump(updates)
+
+        tkinter.Label.return_value.configure.assert_called_once_with(text="Hello world")
+        tkinter.Tk.return_value.deiconify.assert_called_once()
+        tkinter.Tk.return_value.update.assert_called_once()
+
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
             load_local_model("nemotron")
@@ -491,6 +533,42 @@ class EssentialTests(unittest.TestCase):
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
     @patch("voicecommander.app.Recorder")
+    @patch("voicecommander.app.threading.Thread")
+    def test_each_preview_worker_keeps_its_own_stop_event(
+        self,
+        thread_type: Mock,
+        recorder_type: Mock,
+        executor_type: Mock,
+        timer: Mock,
+    ) -> None:
+        recorder_type.return_value.stop.return_value = Path("recording.wav")
+        app = VoiceCommander(Settings())
+
+        app.on_hotkey()
+
+        first_stop = app._preview_stop
+        self.assertEqual(app._preview_updates.get_nowait(), "Listening")
+        thread_type.assert_called_once_with(
+            target=app._preview, args=(first_stop,), daemon=True
+        )
+        thread_type.return_value.start.assert_called_once()
+
+        app.on_hotkey()
+
+        self.assertTrue(first_stop.is_set())
+        self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
+
+        app.state = State.IDLE
+        app.on_hotkey()
+
+        second_stop = app._preview_stop
+        self.assertIsNot(first_stop, second_stop)
+        self.assertTrue(first_stop.is_set())
+        self.assertFalse(second_stop.is_set())
+
+    @patch("voicecommander.app.threading.Timer")
+    @patch("voicecommander.app.ThreadPoolExecutor")
+    @patch("voicecommander.app.Recorder")
     def test_hotkey_is_ignored_during_processing(
         self, recorder_type: Mock, executor_type: Mock, timer: Mock
     ) -> None:
@@ -542,6 +620,7 @@ class EssentialTests(unittest.TestCase):
             patch("voicecommander.app.threading.Event") as event_type,
             patch("voicecommander.app._beep"),
             patch("voicecommander.app.show_settings") as show_settings,
+            patch("voicecommander.app.PreviewOverlay") as preview_type,
             patch.dict(modules, {"keyboard": keyboard}),
         ):
             event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]
@@ -560,10 +639,33 @@ class EssentialTests(unittest.TestCase):
             [call.args[0] for call in keyboard.add_hotkey.call_args_list],
             ["f9", "f7", "ctrl+f9", "f10", "f6", "ctrl+f10"],
         )
-        show_settings.assert_called_once_with(initial)
+        show_settings.assert_called_once_with(initial, preview_type.return_value.root)
         recorder_type.assert_called_with("3: Microphone")
         self.assertEqual(app.settings, updated)
         executor_type.return_value.shutdown.assert_called_once()
+
+    def test_settings_window_returns_control_to_recording(self) -> None:
+        keyboard = Mock()
+        tkinter = Mock()
+        with (
+            patch("voicecommander.app.Recorder") as recorder_type,
+            patch("voicecommander.app.ThreadPoolExecutor"),
+            patch("voicecommander.app.threading.Event") as event_type,
+            patch("voicecommander.app.threading.Timer"),
+            patch("voicecommander.app._beep"),
+            patch.dict(modules, {"keyboard": keyboard, "tkinter": tkinter}),
+        ):
+            event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]
+            app = VoiceCommander(Settings(asr_provider="openrouter"))
+            app.request_settings()
+            app.run()
+            app.on_hotkey()
+
+        tkinter.Tk.assert_called_once_with()
+        tkinter.Toplevel.assert_called_once_with(tkinter.Tk.return_value)
+        tkinter.Toplevel.return_value.wait_window.assert_called_once_with()
+        tkinter.Toplevel.return_value.mainloop.assert_not_called()
+        recorder_type.return_value.start.assert_called_once_with()
 
     def test_switching_to_local_transcription_loads_the_model(self) -> None:
         with (
@@ -572,6 +674,7 @@ class EssentialTests(unittest.TestCase):
             patch("voicecommander.app.threading.Event") as event_type,
             patch("voicecommander.app._beep"),
             patch("voicecommander.app.show_settings") as show_settings,
+            patch("voicecommander.app.PreviewOverlay"),
             patch.dict(modules, {"keyboard": Mock()}),
         ):
             event_type.return_value.wait.side_effect = [True, KeyboardInterrupt]

@@ -71,7 +71,13 @@ class Recorder:
     def _capture(self, data, frames, time, status) -> None:
         if status:
             logger.warning("Audio callback status: %s", status)
-        self._chunks.append(bytes(data))
+        with self._lock:
+            self._chunks.append(bytes(data))
+
+    def snapshot(self) -> bytes:
+        """Copy the audio recorded so far without changing the final recording."""
+        with self._lock:
+            return b"".join(self._chunks)
 
     def stop(self) -> Path:
         with self._lock:
@@ -80,8 +86,10 @@ class Recorder:
             stream, self._stream = self._stream, None
         stream.stop()
         stream.close()
-        if not self._chunks:
-            raise RuntimeError("No audio was recorded")
-        path = write_wav(b"".join(self._chunks))
-        self._chunks.clear()
+        with self._lock:
+            if not self._chunks:
+                raise RuntimeError("No audio was recorded")
+            data = b"".join(self._chunks)
+            self._chunks.clear()
+        path = write_wav(data)
         return path
