@@ -217,7 +217,7 @@ def run_pipeline(
     if settings.asr_provider == "local":
         if loaded_model is None:
             raise RuntimeError("Local ASR model is not loaded")
-        raw = loaded_model.start(settings).finish(path)
+        raw = loaded_model.transcribe(path, settings)
     else:
         raw = transcribe_openrouter(path, settings, api_key)
     if markdown:

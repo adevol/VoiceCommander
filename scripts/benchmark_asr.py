@@ -46,10 +46,12 @@ def main() -> int:
     model = load_local_model(args.model)
     load_seconds = perf_counter() - started
 
-    session = model.start(settings)
-
     def run_once() -> str:
-        result = session.feed(pcm16) if args.preview else session.finish(args.audio)
+        result = (
+            model.preview(pcm16, settings)
+            if args.preview
+            else model.transcribe(args.audio, settings)
+        )
         if result is None:
             raise RuntimeError("Preview request was dropped")
         return result

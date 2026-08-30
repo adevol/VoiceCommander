@@ -55,10 +55,8 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_live_preview_publishes_the_latest_transcript(self) -> None:
         recorder = Mock()
         recorder.snapshot.return_value = b"pcm"
-        session = Mock()
-        session.feed.return_value = "Hello world"
         model = Mock()
-        model.start.return_value = session
+        model.preview.return_value = "Hello world"
         stop = Mock()
         stop.wait.side_effect = [False, True]
         stop.is_set.return_value = False
@@ -67,7 +65,7 @@ class VoiceCommanderTests(unittest.TestCase):
         transcribe_live(recorder, model, Settings(), stop, updates)
 
         self.assertEqual(updates.get_nowait(), "Hello world")
-        session.feed.assert_called_once_with(b"pcm")
+        model.preview.assert_called_once_with(b"pcm", Settings())
 
     def test_preview_overlay_consumes_worker_updates(self) -> None:
         tkinter = Mock()
@@ -92,7 +90,7 @@ class VoiceCommanderTests(unittest.TestCase):
     @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="Hello")
     @patch("voicecommander.local_asr._ensure_whisper")
-    def test_whisper_session_previews_then_finishes_authoritatively(
+    def test_whisper_engine_previews_then_transcribes_authoritatively(
         self, ensure: Mock, transcribe: Mock, start_server: Mock
     ) -> None:
         ensure.return_value = (
@@ -105,14 +103,12 @@ class VoiceCommanderTests(unittest.TestCase):
         settings = Settings(language="de-DE")
 
         engine = load_local_model("base")
-        session = engine.start(settings)
-
         start_server.assert_not_called()
         self.assertEqual(
-            session.feed(b"partial audio"),
+            engine.preview(b"partial audio", settings),
             "Hallo",
         )
-        self.assertEqual(session.finish(Path("recording.wav")), "Hello")
+        self.assertEqual(engine.transcribe(Path("recording.wav"), settings), "Hello")
         start_server.assert_called_once_with(Path("whisper-server.exe"), Path("model.bin"))
         server.transcribe.assert_called_once_with(b"partial audio", settings)
         transcribe.assert_called_once_with(
@@ -139,12 +135,12 @@ class VoiceCommanderTests(unittest.TestCase):
         engine = load_local_model("base")
         results = []
         worker = threading.Thread(
-            target=lambda: results.append(engine.start(Settings()).feed(b"first"))
+            target=lambda: results.append(engine.preview(b"first", Settings()))
         )
         worker.start()
         self.assertTrue(entered.wait(1))
 
-        self.assertIsNone(engine.start(Settings()).feed(b"newest"))
+        self.assertIsNone(engine.preview(b"newest", Settings()))
 
         release.set()
         worker.join(1)
@@ -154,7 +150,7 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_local_pipeline_refines_only_the_final_transcript(self) -> None:
         settings = Settings(postprocess_strength=50)
         engine = Mock()
-        engine.start.return_value.finish.return_value = "raw transcript"
+        engine.transcribe.return_value = "raw transcript"
 
         with patch(
             "voicecommander.pipeline.postprocess_openrouter", return_value="edited transcript"
@@ -162,8 +158,7 @@ class VoiceCommanderTests(unittest.TestCase):
             result = run_pipeline(Path("recording.wav"), settings, engine, "secret")
 
         self.assertEqual(result, "edited transcript")
-        engine.start.assert_called_once_with(settings)
-        engine.start.return_value.finish.assert_called_once_with(Path("recording.wav"))
+        engine.transcribe.assert_called_once_with(Path("recording.wav"), settings)
         postprocess.assert_called_once_with("raw transcript", settings, "secret")
 
     @patch("voicecommander.local_asr._download")

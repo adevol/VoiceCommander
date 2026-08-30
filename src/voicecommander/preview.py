@@ -20,12 +20,11 @@ def transcribe_live(
     stop: threading.Event,
     updates: queue.SimpleQueue[str | None],
 ) -> None:
-    session = model.start(settings)
     while not stop.wait(PREVIEW_INTERVAL):
         pcm16 = recorder.snapshot()
         if not pcm16:
             continue
-        text = session.feed(pcm16)
+        text = model.preview(pcm16, settings)
         if text and not stop.is_set():
             updates.put(text)
 

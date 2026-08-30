@@ -112,7 +112,7 @@ def _transcribe(
             continue
         path = write_wav((numpy.clip(chunk, -1, 1) * 32767).astype(numpy.int16).tobytes())
         try:
-            text = model.start(settings).finish(path)
+            text = model.transcribe(path, settings)
         except Exception as error:
             logger.warning("Caption chunk failed: %s", error)
             continue

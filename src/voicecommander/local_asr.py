@@ -31,28 +31,6 @@ WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab609259
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class _WhisperSession:
-    engine: LocalAsrEngine
-    settings: Settings
-
-    def feed(self, pcm16: bytes) -> str | None:
-        """Decode the latest complete 16 kHz mono PCM snapshot.
-
-        A concurrent request is dropped rather than queued. The final WAV pass
-        remains authoritative.
-        """
-        return self.engine._preview(pcm16, self.settings)
-
-    def finish(self, path: Path) -> str:
-        return _transcribe_whisper(
-            self.engine.executable,
-            self.engine.model,
-            path,
-            self.settings,
-        )
-
-
 @dataclass(slots=True)
 class LocalAsrEngine:
     executable: Path
@@ -61,10 +39,8 @@ class LocalAsrEngine:
     _server: _WhisperServer | None = field(default=None, init=False, repr=False)
     _preview_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
-    def start(self, settings: Settings) -> _WhisperSession:
-        return _WhisperSession(self, settings)
-
-    def _preview(self, pcm16: bytes, settings: Settings) -> str | None:
+    def preview(self, pcm16: bytes, settings: Settings) -> str | None:
+        """Decode a snapshot, dropping rather than queuing a concurrent request."""
         if not self._preview_lock.acquire(blocking=False):
             return None
         try:
@@ -73,6 +49,9 @@ class LocalAsrEngine:
             return self._server.transcribe(pcm16, settings)
         finally:
             self._preview_lock.release()
+
+    def transcribe(self, path: Path, settings: Settings) -> str:
+        return _transcribe_whisper(self.executable, self.model, path, settings)
 
     def close(self) -> None:
         with self._preview_lock:
