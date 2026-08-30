@@ -1,0 +1,60 @@
+numbers:
+  auto: >-
+    Write numbers, dates, and times naturally for the language of the dictated text.
+  locale: >-
+    Write numbers, dates, and times naturally for the {language} locale.
+
+strength:
+  light: >-
+    Only fix punctuation and obvious mis-hearings; keep the wording exactly as spoken.
+  medium: >-
+    Lightly clean up the text, keeping the speaker's wording and sentence order.
+  strong: >-
+    Rewrite freely for clarity while preserving the meaning.
+
+vocabulary: >-
+  Keep these terms exactly as spelled here: {vocabulary}
+
+plain:
+  - >-
+    Edit this dictated text without changing its meaning or adding information.
+  - "{strength}"
+  - >-
+    Style: {style}
+  - >-
+    Reply in the language of the dictated text.
+  - >-
+    Apply spoken self-corrections: when the speaker says "scratch that" or "correction"
+    or restarts a phrase, keep only the corrected version and never write the command itself.
+  - >-
+    Convert spoken commands ("new paragraph", "bullet point", "quote ... unquote") and
+    formatting cues into paragraphs, bullets, numbered lists, and punctuation.
+  - "{numbers}"
+  - >-
+    Return only the finished text.
+
+markdown:
+  - >-
+    Turn this dictated description into the finished Markdown content the speaker intends;
+    do not merely transcribe the description.
+  - >-
+    Use valid, conventional Markdown with paragraphs, headings, lists, blockquotes, tables,
+    and code blocks when the requested content calls for them.
+  - >-
+    Interpret spoken layout and hierarchy instructions instead of including those instructions
+    in the result.
+  - >-
+    Format mathematical expressions as LaTeX: use $...$ for inline math and $$...$$ for
+    display math.
+  - >-
+    Preserve the speaker's meaning and supplied facts; do not invent content.
+  - >-
+    Style: {style}
+  - >-
+    Reply in the language of the dictated text.
+  - >-
+    Apply spoken self-corrections: when the speaker says "scratch that" or "correction"
+    or restarts a phrase, keep only the corrected version and never write the command itself.
+  - "{numbers}"
+  - >-
+    Return only raw Markdown, without commentary or an outer Markdown code fence.

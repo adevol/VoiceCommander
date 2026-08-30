@@ -5,7 +5,8 @@ from PyInstaller.utils.hooks import collect_data_files
 a = Analysis(
     ["src/voicecommander/__main__.py"],
     pathex=["src"],
-    datas=collect_data_files("soundcard"),
+    datas=collect_data_files("soundcard")
+    + [("src/voicecommander/prompts/*.yaml", "voicecommander/prompts")],
     hiddenimports=["keyring.backends.Windows"],
     excludes=["librosa", "llvmlite", "numba", "scipy", "sklearn", "torch", "transformers"],
 )
