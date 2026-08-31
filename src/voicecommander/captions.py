@@ -13,7 +13,7 @@ import queue
 import threading
 from contextlib import suppress
 
-from .audio import SAMPLE_RATE, write_wav
+from .audio import SAMPLE_RATE
 from .local_asr import load_local_model
 from .settings import Settings
 
@@ -110,16 +110,15 @@ def _transcribe(
             continue
         if numpy.abs(chunk).max() < SILENCE_PEAK:
             continue
-        path = write_wav((numpy.clip(chunk, -1, 1) * 32767).astype(numpy.int16).tobytes())
+        pcm16 = (numpy.clip(chunk, -1, 1) * 32767).astype(numpy.int16).tobytes()
         try:
-            text = model.transcribe(path, settings)
+            result = model.preview(pcm16, settings)
         except Exception as error:
             logger.warning("Caption chunk failed: %s", error)
             continue
-        finally:
-            path.unlink(missing_ok=True)
-        if is_speech(text):
-            lines.put(text)
+        if result is not None and is_speech(result.text):
+            lines.put(result.text)
+    model.close()
 
 
 def run_captions(settings: Settings) -> int:

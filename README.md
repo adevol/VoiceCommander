@@ -96,7 +96,8 @@ The `VoiceCommander Captions` Start menu shortcut captions audio playing on
 your computer in an always-on-top window. Audio stays local. Captions currently
 use a separate model setting, which defaults to `base`, and arrive about eight
 seconds behind playback. Language follows the dictation setting, including
-automatic detection.
+automatic detection. One warm local ASR process handles successive caption
+blocks.
 
 During development, run:
 
