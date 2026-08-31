@@ -16,7 +16,10 @@ from voicecommander.audio import Recorder
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
     LocalAsrEngine,
+    PreviewResult,
+    PreviewSegment,
     WHISPER_RUNTIME_SHA256,
+    _WhisperServer,
     _ensure_whisper,
     _transcribe_whisper,
     load_local_model,
@@ -27,7 +30,7 @@ from voicecommander.pipeline import (
     run_pipeline,
     transcribe_openrouter,
 )
-from voicecommander.preview import PreviewOverlay, transcribe_live
+from voicecommander.preview import PreviewOverlay, PreviewText, transcribe_live
 from voicecommander.settings import (
     WHISPER_MODELS,
     Settings,
@@ -57,16 +60,32 @@ class VoiceCommanderTests(unittest.TestCase):
         recorder = Mock()
         recorder.snapshot.return_value = b"pcm"
         model = Mock()
-        model.preview.return_value = "Hello world"
+        model.preview.side_effect = [
+            PreviewResult(
+                "Hello brave",
+                (PreviewSegment("Hello", 1.0), PreviewSegment(" brave", 3.5)),
+                4.0,
+            ),
+            PreviewResult(
+                "Hello brave world",
+                (
+                    PreviewSegment("Hello", 1.0),
+                    PreviewSegment(" brave", 3.0),
+                    PreviewSegment(" world", 4.5),
+                ),
+                5.0,
+            ),
+        ]
         stop = Mock()
-        stop.wait.side_effect = [False, True]
+        stop.wait.side_effect = [False, False, True]
         stop.is_set.return_value = False
         updates = queue.SimpleQueue()
 
         transcribe_live(recorder, model, Settings(), stop, updates)
 
-        self.assertEqual(updates.get_nowait(), "Hello world")
-        model.preview.assert_called_once_with(b"pcm", Settings())
+        self.assertEqual(updates.get_nowait(), PreviewText("", "Hello brave"))
+        self.assertEqual(updates.get_nowait(), PreviewText("Hello", " brave world"))
+        self.assertEqual(model.preview.call_count, 2)
 
     def test_preview_overlay_consumes_worker_updates(self) -> None:
         tkinter = Mock()
@@ -74,7 +93,7 @@ class VoiceCommanderTests(unittest.TestCase):
         tkinter.Label.return_value.winfo_reqwidth.return_value = 300
         tkinter.Label.return_value.winfo_reqheight.return_value = 40
         updates = queue.SimpleQueue()
-        updates.put("Hello world")
+        updates.put(PreviewText("Hello", " world"))
 
         with patch.dict(modules, {"tkinter": tkinter}):
             overlay = PreviewOverlay()
@@ -83,6 +102,26 @@ class VoiceCommanderTests(unittest.TestCase):
         tkinter.Label.return_value.configure.assert_called_once_with(text="Hello world")
         tkinter.Tk.return_value.deiconify.assert_called_once()
         tkinter.Tk.return_value.update.assert_not_called()
+
+    @patch("voicecommander.local_asr.urlopen")
+    def test_preview_server_parses_timestamped_results(self, urlopen: Mock) -> None:
+        urlopen.return_value = BytesIO(
+            b'{"text":"Hello world","duration":3.0,"segments":'
+            b'[{"text":"Hello","end":1.0},{"text":" world","end":2.5}]}'
+        )
+        server = _WhisperServer(Mock(), "http://127.0.0.1:1")
+
+        result = server.transcribe(b"pcm", Settings())
+
+        self.assertEqual(
+            result,
+            PreviewResult(
+                "Hello world",
+                (PreviewSegment("Hello", 1.0), PreviewSegment(" world", 2.5)),
+                3.0,
+            ),
+        )
+        self.assertIn(b'verbose_json', urlopen.call_args.args[0].data)
 
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
@@ -100,14 +139,15 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("model.bin"),
         )
         server = start_server.return_value
-        server.transcribe.return_value = "Hallo"
+        preview = PreviewResult("Hallo", (PreviewSegment("Hallo", 1.0),), 1.0)
+        server.transcribe.return_value = preview
         settings = Settings(language="de-DE")
 
         engine = load_local_model("base")
         start_server.assert_not_called()
         self.assertEqual(
             engine.preview(b"partial audio", settings),
-            "Hallo",
+            preview,
         )
         self.assertEqual(engine.transcribe(Path("recording.wav"), settings), "Hello")
         start_server.assert_called_once_with(
@@ -129,10 +169,12 @@ class VoiceCommanderTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        def transcribe(data: bytes, settings: Settings) -> str:
+        preview = PreviewResult("first", (PreviewSegment("first", 1.0),), 1.0)
+
+        def transcribe(data: bytes, settings: Settings) -> PreviewResult:
             entered.set()
             release.wait(1)
-            return "first"
+            return preview
 
         start_server.return_value.transcribe.side_effect = transcribe
         engine = load_local_model("base")
@@ -147,7 +189,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         release.set()
         worker.join(1)
-        self.assertEqual(results, ["first"])
+        self.assertEqual(results, [preview])
         engine.close()
 
     def test_cancel_preview_stops_the_warm_server(self) -> None:

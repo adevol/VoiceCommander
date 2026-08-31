@@ -31,6 +31,19 @@ WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab609259
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class PreviewSegment:
+    text: str
+    end: float
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewResult:
+    text: str
+    segments: tuple[PreviewSegment, ...]
+    duration: float
+
+
 @dataclass(slots=True)
 class LocalAsrEngine:
     executable: Path
@@ -40,7 +53,7 @@ class LocalAsrEngine:
     _preview_lock: Lock = field(default_factory=Lock, init=False, repr=False)
     _preview_cancel: Event = field(default_factory=Event, init=False, repr=False)
 
-    def preview(self, pcm16: bytes, settings: Settings) -> str | None:
+    def preview(self, pcm16: bytes, settings: Settings) -> PreviewResult | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
         if not self._preview_lock.acquire(blocking=False):
             return None
@@ -74,7 +87,7 @@ class _WhisperServer:
     process: subprocess.Popen
     url: str
 
-    def transcribe(self, pcm16: bytes, settings: Settings) -> str:
+    def transcribe(self, pcm16: bytes, settings: Settings) -> PreviewResult:
         boundary, body = _preview_request(pcm16, settings)
         request = Request(
             self.url + "/inference",
@@ -92,9 +105,23 @@ class _WhisperServer:
             ) from error
         except (OSError, json.JSONDecodeError) as error:
             raise RuntimeError(f"Whisper preview failed: {error}") from error
-        if not isinstance(result, dict) or not isinstance(result.get("text"), str):
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("text"), str)
+            or not isinstance(result.get("duration"), (int, float))
+            or not isinstance(result.get("segments"), list)
+        ):
             raise RuntimeError("Whisper preview returned an invalid response")
-        return result["text"].strip()
+        segments = []
+        for segment in result["segments"]:
+            if (
+                not isinstance(segment, dict)
+                or not isinstance(segment.get("text"), str)
+                or not isinstance(segment.get("end"), (int, float))
+            ):
+                raise RuntimeError("Whisper preview returned an invalid response")
+            segments.append(PreviewSegment(segment["text"], float(segment["end"])))
+        return PreviewResult(result["text"].strip(), tuple(segments), float(result["duration"]))
 
     def close(self) -> None:
         if self.process.poll() is not None:
@@ -187,7 +214,7 @@ def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
 
     boundary = f"voicecommander-{os.urandom(12).hex()}"
     fields = {
-        "response_format": "json",
+        "response_format": "verbose_json",
         "language": _whisper_language(settings.language),
         "temperature": "0",
         "token_timestamps": "false",
@@ -225,7 +252,6 @@ def _start_whisper_server(executable: Path, model: Path, cancel: Event) -> _Whis
             "127.0.0.1",
             "--port",
             str(port),
-            "--no-timestamps",
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

@@ -54,7 +54,7 @@ def main() -> int:
         )
         if result is None:
             raise RuntimeError("Preview request was dropped")
-        return result
+        return result.text if args.preview else result
 
     first_preview = None
     transcript = ""

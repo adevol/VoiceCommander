@@ -4,13 +4,25 @@ from __future__ import annotations
 
 import queue
 import threading
+from dataclasses import dataclass
 
 from .audio import Recorder
 from .local_asr import LocalAsrEngine
 from .settings import Settings
 
 PREVIEW_INTERVAL = 1.0
+CORRECTION_HORIZON = 2.0
 PREVIEW_MODELS = {"tiny", "base"}
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewText:
+    stable: str
+    tentative: str
+
+    @property
+    def text(self) -> str:
+        return f"{self.stable}{self.tentative}".strip()
 
 
 def transcribe_live(
@@ -18,17 +30,40 @@ def transcribe_live(
     model: LocalAsrEngine,
     settings: Settings,
     stop: threading.Event,
-    updates: queue.SimpleQueue[str | None],
+    updates: queue.SimpleQueue[PreviewText | str | None],
 ) -> None:
+    previous: tuple[str, ...] | None = None
+    stable: tuple[str, ...] = ()
     while not stop.wait(PREVIEW_INTERVAL):
         pcm16 = recorder.snapshot()
         if not pcm16:
             continue
         if stop.is_set():
             break
-        text = model.preview(pcm16, settings)
-        if text and not stop.is_set():
-            updates.put(text)
+        result = model.preview(pcm16, settings)
+        if result is None or stop.is_set():
+            continue
+        eligible = tuple(
+            segment.text
+            for segment in result.segments
+            if segment.end <= result.duration - CORRECTION_HORIZON
+        )
+        if previous is not None:
+            confirmed = []
+            for before, current in zip(previous, eligible):
+                if before != current:
+                    break
+                confirmed.append(current)
+            if tuple(confirmed[: len(stable)]) == stable:
+                stable = tuple(confirmed)
+        previous = eligible
+        stable_text = "".join(stable).strip()
+        tentative = result.text
+        if stable_text and tentative.startswith(stable_text):
+            tentative = tentative[len(stable_text) :]
+        update = PreviewText(stable_text, tentative)
+        if update.text:
+            updates.put(update)
 
 
 class PreviewOverlay:
@@ -51,7 +86,7 @@ class PreviewOverlay:
         )
         self.text.pack(padx=20, pady=14)
 
-    def pump(self, updates: queue.SimpleQueue[str | None]) -> None:
+    def pump(self, updates: queue.SimpleQueue[PreviewText | str | None]) -> None:
         while True:
             try:
                 text = updates.get_nowait()
@@ -60,6 +95,8 @@ class PreviewOverlay:
             if text is None:
                 self.root.withdraw()
                 continue
+            if isinstance(text, PreviewText):
+                text = text.text
             self.text.configure(text=text)
             self.root.update_idletasks()
             width = min(760, max(260, self.text.winfo_reqwidth() + 40))

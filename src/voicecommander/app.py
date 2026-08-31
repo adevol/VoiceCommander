@@ -16,7 +16,7 @@ from pathlib import Path
 from .audio import Recorder
 from .local_asr import LocalAsrEngine, load_local_model
 from .pipeline import run_pipeline
-from .preview import PREVIEW_MODELS, PreviewOverlay, transcribe_live
+from .preview import PREVIEW_MODELS, PreviewOverlay, PreviewText, transcribe_live
 from .settings import APP_DIR, Settings, get_api_key, show_settings
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ class VoiceCommander:
         self._timer: threading.Timer | None = None
         self._preview_stop = threading.Event()
         self._preview_stop.set()
-        self._preview_updates: queue.SimpleQueue[str | None] = queue.SimpleQueue()
+        self._preview_updates: queue.SimpleQueue[PreviewText | str | None] = queue.SimpleQueue()
         self._menu_open = False
         self._markdown = False
         self._settings_requested = threading.Event()
