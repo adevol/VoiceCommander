@@ -22,6 +22,39 @@ not reset.
 Installed builds start quietly when you sign in, so the hotkeys are ready
 without opening the application.
 
+## How it works
+
+VoiceCommander has separate dictation and live-caption launch modes:
+
+```mermaid
+flowchart TD
+    A{Launch mode} -->|VoiceCommander| B[Load settings and register hotkeys]
+    A -->|Captions shortcut| N[Capture speaker loopback]
+
+    B --> C{User action}
+    C -->|F8 or F7| D[Record microphone]
+    C -->|Ctrl+F8| E[Edit settings]
+    E --> B
+
+    D --> F[Optional local preview]
+    D -->|Press hotkey again| G[Create temporary WAV]
+    G --> H{Transcription provider}
+    H -->|Local default| I[Whisper]
+    H -.->|OpenRouter| J[Cloud audio model]
+    I --> K[Final transcript]
+    J --> K
+    K --> L{Cleanup or Markdown?}
+    L -->|No| M[Paste once at cursor]
+    L -.->|Yes| O[OpenRouter text model]
+    O --> M
+    M --> C
+
+    N --> P[Four-second rolling window]
+    P --> Q[Warm local ASR]
+    Q --> R[Update caption window]
+    R --> N
+```
+
 ## Where your data goes
 
 Each recording becomes a temporary WAV file. By default, one local ASR session
