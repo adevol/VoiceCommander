@@ -116,9 +116,6 @@ uv run python -m unittest discover -s tests
 uv run python scripts/benchmark_asr.py recording.wav --model base
 ```
 
-The [caption ASR design note](docs/caption-architecture.md) records when a
-second local ASR adapter should be introduced.
-
 Install Inno Setup, then build the installer:
 
 ```powershell

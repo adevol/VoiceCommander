@@ -14,12 +14,11 @@ from urllib.error import HTTPError
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.audio import Recorder
 from voicecommander.captions import (
-    CaptionSession,
-    CaptionUpdate,
-    CaptionWindow,
+    _merge_caption_text,
     _put_latest,
     _transcribe,
     is_speech,
+    run_captions,
 )
 from voicecommander.local_asr import (
     LocalAsrEngine,
@@ -361,7 +360,6 @@ class VoiceCommanderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
             validate(Settings(openrouter_asr_model="custom/transcriber"))
         validate(Settings(local_asr_model="tiny"))
-        validate(Settings(caption_asr_model="tiny"))
         for name in (
             "parakeet-tdt-v3",
             "parakeet-tdt-v2",
@@ -385,48 +383,17 @@ class VoiceCommanderTests(unittest.TestCase):
         for noise in ("", "[BLANK_AUDIO]", "(music)", "[Musik]"):
             self.assertFalse(is_speech(noise))
 
-    def test_caption_session_reconciles_overlap_and_marks_stable_text(self) -> None:
-        model = Mock()
-        model.preview.side_effect = [
-            PreviewResult(
-                "Hello world",
-                (PreviewSegment("Hello", 1.0), PreviewSegment(" world", 3.5)),
-                4.0,
-            ),
-            PreviewResult(
-                "Hello world again",
-                (
-                    PreviewSegment("Hello", 1.0),
-                    PreviewSegment(" world", 2.0),
-                    PreviewSegment(" again", 3.5),
-                ),
-                4.0,
-            ),
-        ]
-        session = CaptionSession(model, Settings())
-
-        first = session.process(CaptionWindow(0.0, b"first", 0.5))
-        second = session.process(CaptionWindow(1.0, b"second", 0.5))
-
-        self.assertIsInstance(first, CaptionUpdate)
-        self.assertEqual(first.text, "Hello world")
-        self.assertEqual([segment.final for segment in first.segments], [True, False])
-        self.assertEqual(second.text, "Hello world again")
-        self.assertEqual(
-            [segment.final for segment in second.segments], [True, True, False]
+    def test_caption_text_merges_overlapping_words(self) -> None:
+        cases = (
+            ("", "Hello world", "Hello world"),
+            ("Hello world", "hello world", "Hello world"),
+            ("Hello, world!", "WORLD again", "Hello, world! again"),
+            ("one two three", "two three four", "one two three four"),
+            ("hello", "there", "hello there"),
         )
-        self.assertEqual(
-            [call.args[0] for call in model.preview.call_args_list],
-            [b"first", b"second"],
-        )
-
-    def test_caption_session_ignores_silence(self) -> None:
-        model = Mock()
-        session = CaptionSession(model, Settings())
-
-        self.assertIsNone(session.process(CaptionWindow(0.0, b"silence", 0.001)))
-
-        model.preview.assert_not_called()
+        for previous, current, expected in cases:
+            with self.subTest(previous=previous, current=current):
+                self.assertEqual(_merge_caption_text(previous, current), expected)
 
     def test_captions_drop_backlog(self) -> None:
         chunks = queue.Queue(maxsize=1)
@@ -434,9 +401,10 @@ class VoiceCommanderTests(unittest.TestCase):
         _put_latest(chunks, "new")
         self.assertEqual(chunks.get_nowait(), "new")
 
-    def test_caption_worker_closes_its_model_on_shutdown(self) -> None:
-        chunks = queue.Queue(maxsize=1)
-        chunks.put(CaptionWindow(0.0, b"speech", 0.5))
+    def test_caption_worker_skips_silence_and_closes_its_model(self) -> None:
+        chunks = queue.Queue()
+        chunks.put((b"silence", 0.001))
+        chunks.put((b"speech", 0.5))
         lines = queue.Queue()
         stop = threading.Event()
         model = Mock()
@@ -450,9 +418,30 @@ class VoiceCommanderTests(unittest.TestCase):
             _transcribe(chunks, lines, Settings(caption_asr_model="tiny"), stop)
 
         load.assert_called_once_with("tiny")
+        model.preview.assert_called_once_with(
+            b"speech", Settings(caption_asr_model="tiny")
+        )
         model.close.assert_called_once_with()
         self.assertEqual(lines.get_nowait(), "(listening)")
-        self.assertEqual(lines.get_nowait().text, "Hello")
+        self.assertEqual(lines.get_nowait(), "Hello")
+
+    def test_caption_window_joins_workers_on_shutdown(self) -> None:
+        tkinter = Mock()
+        run_first_tk_poll(tkinter.Tk.return_value)
+        workers = [Mock(), Mock()]
+        with (
+            patch.dict(modules, {"tkinter": tkinter}),
+            patch("voicecommander.captions.threading.Thread", side_effect=workers) as thread,
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            run_captions(Settings())
+
+        self.assertEqual(thread.call_count, 2)
+        for worker in workers:
+            worker.start.assert_called_once_with()
+            worker.join.assert_called_once_with()
+        stop = thread.call_args_list[0].kwargs["args"][2]
+        self.assertTrue(stop.is_set())
 
     def test_caption_worker_stops_after_model_load_failure(self) -> None:
         lines = queue.Queue()
