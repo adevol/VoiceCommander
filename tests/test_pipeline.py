@@ -13,7 +13,14 @@ from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.audio import Recorder
-from voicecommander.captions import _put_latest, _transcribe, is_speech
+from voicecommander.captions import (
+    CaptionSession,
+    CaptionUpdate,
+    CaptionWindow,
+    _put_latest,
+    _transcribe,
+    is_speech,
+)
 from voicecommander.local_asr import (
     LocalAsrEngine,
     PreviewResult,
@@ -314,6 +321,7 @@ class VoiceCommanderTests(unittest.TestCase):
             input_device='2: Mic "Main"',
             max_seconds=42,
             local_asr_model="small",
+            caption_asr_model="tiny",
             openrouter_asr_model="xiaomi/mimo-v2.5",
             postprocess_style="professional",
             postprocess_strength=75,
@@ -353,6 +361,7 @@ class VoiceCommanderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
             validate(Settings(openrouter_asr_model="custom/transcriber"))
         validate(Settings(local_asr_model="tiny"))
+        validate(Settings(caption_asr_model="tiny"))
         for name in (
             "parakeet-tdt-v3",
             "parakeet-tdt-v2",
@@ -364,6 +373,8 @@ class VoiceCommanderTests(unittest.TestCase):
                 ValueError, "Invalid local ASR model"
             ):
                 validate(Settings(local_asr_model=name))
+        with self.assertRaisesRegex(ValueError, "Invalid caption ASR model"):
+            validate(Settings(caption_asr_model="nemotron-3.5"))
         with self.assertRaisesRegex(ValueError, "at most 500 characters"):
             validate(Settings(vocabulary="x" * 501))
         with self.assertRaisesRegex(ValueError, "hotkeys must be different"):
@@ -374,12 +385,76 @@ class VoiceCommanderTests(unittest.TestCase):
         for noise in ("", "[BLANK_AUDIO]", "(music)", "[Musik]"):
             self.assertFalse(is_speech(noise))
 
-    def test_captions_drop_backlog_and_stop_after_model_failure(self) -> None:
+    def test_caption_session_reconciles_overlap_and_marks_stable_text(self) -> None:
+        model = Mock()
+        model.preview.side_effect = [
+            PreviewResult(
+                "Hello world",
+                (PreviewSegment("Hello", 1.0), PreviewSegment(" world", 3.5)),
+                4.0,
+            ),
+            PreviewResult(
+                "Hello world again",
+                (
+                    PreviewSegment("Hello", 1.0),
+                    PreviewSegment(" world", 2.0),
+                    PreviewSegment(" again", 3.5),
+                ),
+                4.0,
+            ),
+        ]
+        session = CaptionSession(model, Settings())
+
+        first = session.process(CaptionWindow(0.0, b"first", 0.5))
+        second = session.process(CaptionWindow(1.0, b"second", 0.5))
+
+        self.assertIsInstance(first, CaptionUpdate)
+        self.assertEqual(first.text, "Hello world")
+        self.assertEqual([segment.final for segment in first.segments], [True, False])
+        self.assertEqual(second.text, "Hello world again")
+        self.assertEqual(
+            [segment.final for segment in second.segments], [True, True, False]
+        )
+        self.assertEqual(
+            [call.args[0] for call in model.preview.call_args_list],
+            [b"first", b"second"],
+        )
+
+    def test_caption_session_ignores_silence(self) -> None:
+        model = Mock()
+        session = CaptionSession(model, Settings())
+
+        self.assertIsNone(session.process(CaptionWindow(0.0, b"silence", 0.001)))
+
+        model.preview.assert_not_called()
+
+    def test_captions_drop_backlog(self) -> None:
         chunks = queue.Queue(maxsize=1)
         _put_latest(chunks, "old")
         _put_latest(chunks, "new")
         self.assertEqual(chunks.get_nowait(), "new")
 
+    def test_caption_worker_closes_its_model_on_shutdown(self) -> None:
+        chunks = queue.Queue(maxsize=1)
+        chunks.put(CaptionWindow(0.0, b"speech", 0.5))
+        lines = queue.Queue()
+        stop = threading.Event()
+        model = Mock()
+
+        def finish(*_args) -> PreviewResult:
+            stop.set()
+            return PreviewResult("Hello", (PreviewSegment("Hello", 1.0),), 1.0)
+
+        model.preview.side_effect = finish
+        with patch("voicecommander.captions.load_local_model", return_value=model) as load:
+            _transcribe(chunks, lines, Settings(caption_asr_model="tiny"), stop)
+
+        load.assert_called_once_with("tiny")
+        model.close.assert_called_once_with()
+        self.assertEqual(lines.get_nowait(), "(listening)")
+        self.assertEqual(lines.get_nowait().text, "Hello")
+
+    def test_caption_worker_stops_after_model_load_failure(self) -> None:
         lines = queue.Queue()
         stop = threading.Event()
         with (
@@ -389,7 +464,7 @@ class VoiceCommanderTests(unittest.TestCase):
             ),
             self.assertLogs("voicecommander.captions", level="ERROR"),
         ):
-            _transcribe(chunks, lines, Settings(), stop)
+            _transcribe(queue.Queue(), lines, Settings(), stop)
         self.assertTrue(stop.is_set())
         self.assertIn("model failed", lines.get_nowait())
 
