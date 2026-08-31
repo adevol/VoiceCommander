@@ -9,6 +9,7 @@ import threading
 import time
 import winsound
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import replace
 from enum import Enum
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -103,6 +104,7 @@ class VoiceCommander:
         self._preview_stop = threading.Event()
         self._preview_stop.set()
         self._preview_updates: queue.SimpleQueue[PreviewText | str | None] = queue.SimpleQueue()
+        self._preview_language: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._menu_open = False
         self._markdown = False
         self._settings_requested = threading.Event()
@@ -201,13 +203,15 @@ class VoiceCommander:
             and self.settings.local_asr_model in PREVIEW_MODELS
         ):
             stop = threading.Event()
+            languages: queue.SimpleQueue[str] = queue.SimpleQueue()
             self._preview_stop = stop
+            self._preview_language = languages
             self._preview_updates.put("Listening")
-            threading.Thread(target=self._preview, args=(stop,), daemon=True).start()
+            threading.Thread(target=self._preview, args=(stop, languages), daemon=True).start()
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
         _beep(900)
 
-    def _preview(self, stop: threading.Event) -> None:
+    def _preview(self, stop: threading.Event, languages: queue.SimpleQueue[str]) -> None:
         try:
             transcribe_live(
                 self.recorder,
@@ -215,6 +219,7 @@ class VoiceCommander:
                 self.settings,
                 stop,
                 self._preview_updates,
+                languages,
             )
         except Exception as error:
             logger.exception("Live preview failed; recording continues")
@@ -239,7 +244,14 @@ class VoiceCommander:
                 model.result().cancel_preview()
         try:
             path = self.recorder.stop()
-            self.executor.submit(self._finish, path, self._markdown)
+            recording_settings = self.settings
+            try:
+                recording_settings = replace(
+                    recording_settings, language=self._preview_language.get_nowait()
+                )
+            except queue.Empty:
+                pass
+            self.executor.submit(self._finish, path, self._markdown, recording_settings)
         except Exception as error:
             self._preview_stop.set()
             self._preview_updates.put(None)
@@ -256,11 +268,14 @@ class VoiceCommander:
                 logger.info("Recording limit reached")
                 self._stop_recording()
 
-    def _finish(self, path: Path, markdown: bool = False) -> None:
+    def _finish(
+        self, path: Path, markdown: bool = False, settings: Settings | None = None
+    ) -> None:
+        settings = settings or self.settings
         try:
             model = self._local_model.result() if self._local_model else None
-            key = get_api_key() if self.settings.uses_openrouter or markdown else ""
-            complete_recording(path, self.settings, model, key, markdown=markdown)
+            key = get_api_key() if settings.uses_openrouter or markdown else ""
+            complete_recording(path, settings, model, key, markdown=markdown)
             _beep(1100)
         except Exception as error:
             logger.exception("Pipeline failed; recording preserved at %s", path)

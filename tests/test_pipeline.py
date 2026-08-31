@@ -65,6 +65,7 @@ class VoiceCommanderTests(unittest.TestCase):
                 "Hello brave",
                 (PreviewSegment("Hello", 1.0), PreviewSegment(" brave", 3.5)),
                 4.0,
+                "de",
             ),
             PreviewResult(
                 "Hello brave world",
@@ -80,12 +81,17 @@ class VoiceCommanderTests(unittest.TestCase):
         stop.wait.side_effect = [False, False, True]
         stop.is_set.return_value = False
         updates = queue.SimpleQueue()
+        languages = queue.SimpleQueue()
 
-        transcribe_live(recorder, model, Settings(), stop, updates)
+        transcribe_live(recorder, model, Settings(), stop, updates, languages)
 
         self.assertEqual(updates.get_nowait(), PreviewText("", "Hello brave"))
         self.assertEqual(updates.get_nowait(), PreviewText("Hello", " brave world"))
-        self.assertEqual(model.preview.call_count, 2)
+        self.assertEqual(languages.get_nowait(), "de")
+        self.assertEqual(
+            [call.args[1].language for call in model.preview.call_args_list],
+            ["auto", "de"],
+        )
 
     def test_preview_overlay_consumes_worker_updates(self) -> None:
         tkinter = Mock()
@@ -107,7 +113,8 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_preview_server_parses_timestamped_results(self, urlopen: Mock) -> None:
         urlopen.return_value = BytesIO(
             b'{"text":"Hello world","duration":3.0,"segments":'
-            b'[{"text":"Hello","end":1.0},{"text":" world","end":2.5}]}'
+            b'[{"text":"Hello","end":1.0},{"text":" world","end":2.5}],'
+            b'"language_probabilities":{"en":0.1,"de":0.9}}'
         )
         server = _WhisperServer(Mock(), "http://127.0.0.1:1")
 
@@ -119,6 +126,7 @@ class VoiceCommanderTests(unittest.TestCase):
                 "Hello world",
                 (PreviewSegment("Hello", 1.0), PreviewSegment(" world", 2.5)),
                 3.0,
+                "de",
             ),
         )
         self.assertIn(b'verbose_json', urlopen.call_args.args[0].data)
@@ -608,23 +616,28 @@ class VoiceCommanderTests(unittest.TestCase):
         app.on_hotkey()
 
         first_stop = app._preview_stop
+        first_languages = app._preview_language
         self.assertEqual(app._preview_updates.get_nowait(), "Listening")
         thread_type.assert_called_once_with(
-            target=app._preview, args=(first_stop,), daemon=True
+            target=app._preview, args=(first_stop, first_languages), daemon=True
         )
         thread_type.return_value.start.assert_called_once()
 
+        first_languages.put("de")
         app.on_hotkey()
 
         self.assertTrue(first_stop.is_set())
         self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
         model_future.result.return_value.cancel_preview.assert_called_once_with()
+        self.assertEqual(executor_type.return_value.submit.call_args.args[-1].language, "de")
 
         app.state = State.IDLE
         app.on_hotkey()
 
         second_stop = app._preview_stop
+        second_languages = app._preview_language
         self.assertIsNot(first_stop, second_stop)
+        self.assertIsNot(first_languages, second_languages)
         self.assertTrue(first_stop.is_set())
         self.assertFalse(second_stop.is_set())
 
@@ -670,7 +683,10 @@ class VoiceCommanderTests(unittest.TestCase):
         markdown_callback()
 
         executor_type.return_value.submit.assert_called_once_with(
-            app._finish, Path("recording.wav"), True
+            app._finish,
+            Path("recording.wav"),
+            True,
+            Settings(asr_provider="openrouter"),
         )
         ctrl_pressed.assert_called()
 

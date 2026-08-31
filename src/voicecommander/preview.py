@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .audio import Recorder
 from .local_asr import LocalAsrEngine
@@ -31,18 +31,30 @@ def transcribe_live(
     settings: Settings,
     stop: threading.Event,
     updates: queue.SimpleQueue[PreviewText | str | None],
+    languages: queue.SimpleQueue[str],
 ) -> None:
     previous: tuple[str, ...] | None = None
     stable: tuple[str, ...] = ()
+    settings_for_recording = settings
     while not stop.wait(PREVIEW_INTERVAL):
         pcm16 = recorder.snapshot()
         if not pcm16:
             continue
         if stop.is_set():
             break
-        result = model.preview(pcm16, settings)
+        result = model.preview(pcm16, settings_for_recording)
         if result is None or stop.is_set():
             continue
+        if settings_for_recording.language == "auto" and result.language and result.text:
+            noise = (
+                result.text.startswith("[")
+                and result.text.endswith("]")
+                or result.text.startswith("(")
+                and result.text.endswith(")")
+            )
+            if not noise:
+                settings_for_recording = replace(settings_for_recording, language=result.language)
+                languages.put(result.language)
         eligible = tuple(
             segment.text
             for segment in result.segments

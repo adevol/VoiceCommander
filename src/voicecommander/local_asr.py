@@ -42,6 +42,7 @@ class PreviewResult:
     text: str
     segments: tuple[PreviewSegment, ...]
     duration: float
+    language: str | None = None
 
 
 @dataclass(slots=True)
@@ -121,7 +122,22 @@ class _WhisperServer:
             ):
                 raise RuntimeError("Whisper preview returned an invalid response")
             segments.append(PreviewSegment(segment["text"], float(segment["end"])))
-        return PreviewResult(result["text"].strip(), tuple(segments), float(result["duration"]))
+        probabilities = result.get("language_probabilities", {})
+        language = None
+        if isinstance(probabilities, dict):
+            candidates = [
+                (code, probability)
+                for code, probability in probabilities.items()
+                if isinstance(code, str) and isinstance(probability, (int, float))
+            ]
+            if candidates:
+                language = max(candidates, key=lambda candidate: candidate[1])[0]
+        return PreviewResult(
+            result["text"].strip(),
+            tuple(segments),
+            float(result["duration"]),
+            language,
+        )
 
     def close(self) -> None:
         if self.process.poll() is not None:
