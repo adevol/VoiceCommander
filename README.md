@@ -94,8 +94,9 @@ VoiceCommander reports the error instead of pasting your spoken instructions.
 
 The `VoiceCommander Captions` Start menu shortcut captions audio playing on
 your computer in an always-on-top window. Audio stays local. Captions currently
-use `base` and arrive about eight seconds behind playback. Language follows the
-dictation setting, including automatic detection.
+use a separate model setting, which defaults to `base`, and arrive about eight
+seconds behind playback. Language follows the dictation setting, including
+automatic detection.
 
 During development, run:
 

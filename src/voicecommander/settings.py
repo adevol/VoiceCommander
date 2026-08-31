@@ -73,6 +73,7 @@ class Settings:
     max_seconds: int = 300
     asr_provider: str = "local"
     local_asr_model: str = "base"
+    caption_asr_model: str = "base"
     live_preview: bool = True
     openrouter_asr_model: str = "google/gemini-2.5-flash"
     postprocess_model: str = "openai/gpt-4o-mini"
@@ -110,6 +111,8 @@ def validate(settings: Settings) -> None:
         raise ValueError("Invalid ASR provider")
     if settings.local_asr_model not in LOCAL_ASR_MODELS:
         raise ValueError("Invalid local ASR model")
+    if settings.caption_asr_model not in LOCAL_ASR_MODELS:
+        raise ValueError("Invalid caption ASR model")
     if settings.openrouter_asr_model not in OPENROUTER_ASR_MODELS:
         raise ValueError("Invalid OpenRouter transcription model")
     if settings.postprocess_strength > 0 and not settings.postprocess_model.strip():
@@ -205,6 +208,7 @@ def show_settings(settings: Settings, parent: object | None = None) -> Settings 
         ("Recording limit (seconds)", "max_seconds", None),
         ("ASR provider", "asr_provider", ASR_PROVIDERS),
         ("Local transcription model", "local_asr_model", LOCAL_ASR_MODELS),
+        ("Caption model", "caption_asr_model", LOCAL_ASR_MODELS),
         ("OpenRouter transcription model", "openrouter_asr_model", OPENROUTER_ASR_MODELS),
         ("Post-processing model", "postprocess_model", None),
         ("Post-processing style", "postprocess_style", tuple(POSTPROCESS_STYLES)),
@@ -219,6 +223,7 @@ def show_settings(settings: Settings, parent: object | None = None) -> Settings 
             "language",
             "asr_provider",
             "local_asr_model",
+            "caption_asr_model",
             "openrouter_asr_model",
             "postprocess_style",
         }:

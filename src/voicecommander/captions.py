@@ -95,7 +95,7 @@ def _transcribe(
     import numpy
 
     try:
-        model = load_local_model("base")
+        model = load_local_model(settings.caption_asr_model)
     except Exception as error:
         logger.exception("Could not load Whisper for captions")
         lines.put(f"Captions unavailable: {error}")
