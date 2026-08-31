@@ -13,6 +13,7 @@ from dataclasses import replace
 from enum import Enum
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Callable
 
 from .audio import Recorder
 from .local_asr import LocalAsrEngine, load_local_model
@@ -70,8 +71,16 @@ def complete_recording(
     loaded_model: LocalAsrEngine | None,
     api_key: str,
     markdown: bool = False,
+    on_refine: Callable[[str], None] | None = None,
 ) -> str:
-    text = run_pipeline(path, settings, loaded_model, api_key, markdown=markdown)
+    text = run_pipeline(
+        path,
+        settings,
+        loaded_model,
+        api_key,
+        markdown=markdown,
+        on_refine=on_refine,
+    )
     deliver_text(text)
     try:
         path.unlink()
@@ -275,7 +284,14 @@ class VoiceCommander:
         try:
             model = self._local_model.result() if self._local_model else None
             key = get_api_key() if settings.uses_openrouter or markdown else ""
-            complete_recording(path, settings, model, key, markdown=markdown)
+            complete_recording(
+                path,
+                settings,
+                model,
+                key,
+                markdown=markdown,
+                on_refine=lambda text: self._preview_updates.put(text or "Refining"),
+            )
             _beep(1100)
         except Exception as error:
             logger.exception("Pipeline failed; recording preserved at %s", path)

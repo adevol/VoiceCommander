@@ -8,7 +8,7 @@ from functools import partial
 from io import BytesIO
 from pathlib import Path
 from sys import modules
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
@@ -27,6 +27,7 @@ from voicecommander.local_asr import (
 from voicecommander.pipeline import (
     _openrouter,
     postprocess_openrouter,
+    postprocess_openrouter_stream,
     run_pipeline,
     transcribe_openrouter,
 )
@@ -222,7 +223,9 @@ class VoiceCommanderTests(unittest.TestCase):
 
         self.assertEqual(result, "edited transcript")
         engine.transcribe.assert_called_once_with(Path("recording.wav"), settings)
-        postprocess.assert_called_once_with("raw transcript", settings, "secret")
+        postprocess.assert_called_once_with(
+            "raw transcript", settings, "secret", markdown=False
+        )
 
     @patch("voicecommander.local_asr._download")
     def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
@@ -406,6 +409,55 @@ class VoiceCommanderTests(unittest.TestCase):
         ):
             result = run_pipeline(Path("recording.wav"), settings, None, "secret")
         self.assertEqual(result, "raw transcript")
+
+    @patch("voicecommander.pipeline.monotonic", side_effect=[0.0, 0.1, 0.2])
+    @patch("voicecommander.pipeline.urlopen")
+    def test_postprocessing_stream_accumulates_text(
+        self, urlopen: Mock, monotonic: Mock
+    ) -> None:
+        urlopen.return_value = BytesIO(
+            b": OPENROUTER PROCESSING\n\n"
+            b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n'
+            b'data: {"choices":[{"delta":{"content":"world"}}]}\n\n'
+            b"data: [DONE]\n\n"
+        )
+        updates = []
+
+        result = postprocess_openrouter_stream(
+            "Raw", Settings(), "secret", updates.append
+        )
+
+        self.assertEqual(result, "Hello world")
+        self.assertEqual(updates, ["Hello ", "Hello world"])
+        request = urlopen.call_args.args[0]
+        self.assertIn(b'"stream": true', request.data)
+
+    @patch("voicecommander.pipeline.postprocess_openrouter", return_value="Edited")
+    @patch(
+        "voicecommander.pipeline.postprocess_openrouter_stream",
+        side_effect=RuntimeError("stream failed"),
+    )
+    def test_stream_failure_retries_without_streaming(
+        self, stream: Mock, postprocess: Mock
+    ) -> None:
+        engine = Mock()
+        engine.transcribe.return_value = "Raw"
+        updates = Mock()
+        settings = Settings(postprocess_strength=50)
+
+        with self.assertLogs("voicecommander.pipeline", level="ERROR"):
+            result = run_pipeline(
+                Path("recording.wav"),
+                settings,
+                engine,
+                "secret",
+                on_refine=updates,
+            )
+
+        self.assertEqual(result, "Edited")
+        self.assertEqual(updates.call_args_list, [call(""), call("Edited")])
+        stream.assert_called_once_with("Raw", settings, "secret", updates, markdown=False)
+        postprocess.assert_called_once_with("Raw", settings, "secret", markdown=False)
 
     @patch("voicecommander.pipeline._openrouter")
     def test_postprocessing_controls_are_sent_in_the_prompt(self, openrouter: Mock) -> None:
@@ -594,6 +646,29 @@ class VoiceCommanderTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 complete_recording(failure, settings, None, "")
             self.assertTrue(failure.exists())
+
+    def test_streaming_refinement_updates_the_overlay_queue(self) -> None:
+        settings = Settings(asr_provider="openrouter", postprocess_strength=50)
+        with (
+            patch("voicecommander.app.Recorder"),
+            patch("voicecommander.app.ThreadPoolExecutor"),
+            patch("voicecommander.app.get_api_key", return_value="secret"),
+            patch("voicecommander.app.complete_recording") as complete,
+            patch("voicecommander.app._beep"),
+        ):
+            complete.side_effect = lambda *args, **kwargs: (
+                kwargs["on_refine"](""),
+                kwargs["on_refine"]("Edited text"),
+            )
+            app = VoiceCommander(settings)
+            app.state = State.PROCESSING
+
+            app._finish(Path("recording.wav"), settings=settings)
+
+        self.assertEqual(app._preview_updates.get_nowait(), "Refining")
+        self.assertEqual(app._preview_updates.get_nowait(), "Edited text")
+        self.assertIsNone(app._preview_updates.get_nowait())
+        self.assertEqual(app.state, State.IDLE)
 
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
