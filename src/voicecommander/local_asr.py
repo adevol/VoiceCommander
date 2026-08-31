@@ -16,7 +16,7 @@ import zipfile
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -38,14 +38,18 @@ class LocalAsrEngine:
     model: Path
     _server: _WhisperServer | None = field(default=None, init=False, repr=False)
     _preview_lock: Lock = field(default_factory=Lock, init=False, repr=False)
+    _preview_cancel: Event = field(default_factory=Event, init=False, repr=False)
 
     def preview(self, pcm16: bytes, settings: Settings) -> str | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
         if not self._preview_lock.acquire(blocking=False):
             return None
         try:
+            self._preview_cancel.clear()
             if self._server is None or self._server.process.poll() is not None:
-                self._server = _start_whisper_server(self.server_executable, self.model)
+                self._server = _start_whisper_server(
+                    self.server_executable, self.model, self._preview_cancel
+                )
             return self._server.transcribe(pcm16, settings)
         finally:
             self._preview_lock.release()
@@ -53,10 +57,15 @@ class LocalAsrEngine:
     def transcribe(self, path: Path, settings: Settings) -> str:
         return _transcribe_whisper(self.executable, self.model, path, settings)
 
+    def cancel_preview(self) -> None:
+        self._preview_cancel.set()
+        if self._server is not None:
+            self._server.close()
+
     def close(self) -> None:
+        self.cancel_preview()
         with self._preview_lock:
             if self._server is not None:
-                self._server.close()
                 self._server = None
 
 
@@ -200,7 +209,7 @@ def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
     return boundary, bytes(body)
 
 
-def _start_whisper_server(executable: Path, model: Path) -> _WhisperServer:
+def _start_whisper_server(executable: Path, model: Path, cancel: Event) -> _WhisperServer:
     with socket.socket() as available:
         available.bind(("127.0.0.1", 0))
         port = available.getsockname()[1]
@@ -226,6 +235,8 @@ def _start_whisper_server(executable: Path, model: Path) -> _WhisperServer:
     server = _WhisperServer(process, url)
     try:
         for _ in range(150):
+            if cancel.is_set():
+                raise RuntimeError("Whisper preview cancelled")
             if process.poll() is not None:
                 raise RuntimeError("Whisper preview server stopped during startup")
             try:

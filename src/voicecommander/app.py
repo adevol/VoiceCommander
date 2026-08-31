@@ -229,6 +229,14 @@ class VoiceCommander:
         if not self._preview_stop.is_set():
             self._preview_stop.set()
             self._preview_updates.put("Finalizing")
+            model = self._local_model
+            if (
+                model is not None
+                and model.done()
+                and not model.cancelled()
+                and model.exception() is None
+            ):
+                model.result().cancel_preview()
         try:
             path = self.recorder.stop()
             self.executor.submit(self._finish, path, self._markdown)

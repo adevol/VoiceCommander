@@ -24,6 +24,8 @@ def transcribe_live(
         pcm16 = recorder.snapshot()
         if not pcm16:
             continue
+        if stop.is_set():
+            break
         text = model.preview(pcm16, settings)
         if text and not stop.is_set():
             updates.put(text)

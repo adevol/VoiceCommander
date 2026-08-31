@@ -15,6 +15,7 @@ from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.audio import Recorder
 from voicecommander.captions import _put_latest, _transcribe, is_speech
 from voicecommander.local_asr import (
+    LocalAsrEngine,
     WHISPER_RUNTIME_SHA256,
     _ensure_whisper,
     _transcribe_whisper,
@@ -109,7 +110,9 @@ class VoiceCommanderTests(unittest.TestCase):
             "Hallo",
         )
         self.assertEqual(engine.transcribe(Path("recording.wav"), settings), "Hello")
-        start_server.assert_called_once_with(Path("whisper-server.exe"), Path("model.bin"))
+        start_server.assert_called_once_with(
+            Path("whisper-server.exe"), Path("model.bin"), engine._preview_cancel
+        )
         server.transcribe.assert_called_once_with(b"partial audio", settings)
         transcribe.assert_called_once_with(
             Path("whisper-cli.exe"), Path("model.bin"), Path("recording.wav"), settings
@@ -146,6 +149,16 @@ class VoiceCommanderTests(unittest.TestCase):
         worker.join(1)
         self.assertEqual(results, ["first"])
         engine.close()
+
+    def test_cancel_preview_stops_the_warm_server(self) -> None:
+        server = Mock()
+        model = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
+        model._server = server
+
+        model.cancel_preview()
+
+        self.assertTrue(model._preview_cancel.is_set())
+        server.close.assert_called_once_with()
 
     def test_local_pipeline_refines_only_the_final_transcript(self) -> None:
         settings = Settings(postprocess_strength=50)
@@ -544,6 +557,10 @@ class VoiceCommanderTests(unittest.TestCase):
         timer: Mock,
     ) -> None:
         recorder_type.return_value.stop.return_value = Path("recording.wav")
+        model_future = executor_type.return_value.submit.return_value
+        model_future.done.return_value = True
+        model_future.cancelled.return_value = False
+        model_future.exception.return_value = None
         app = VoiceCommander(Settings())
 
         app.on_hotkey()
@@ -559,6 +576,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         self.assertTrue(first_stop.is_set())
         self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
+        model_future.result.return_value.cancel_preview.assert_called_once_with()
 
         app.state = State.IDLE
         app.on_hotkey()
