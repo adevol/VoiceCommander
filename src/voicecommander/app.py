@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Callable
 
 from .audio import Recorder
-from .local_asr import LocalAsrEngine, load_local_model
+from .local_asr import LocalAsrEngine, PreviewText, load_local_model
 from .pipeline import run_pipeline
-from .preview import PREVIEW_MODELS, PreviewOverlay, PreviewText, transcribe_live
+from .preview import PREVIEW_MODELS, PreviewOverlay, transcribe_live
 from .settings import APP_DIR, Settings, get_api_key, show_settings
 
 logger = logging.getLogger(__name__)

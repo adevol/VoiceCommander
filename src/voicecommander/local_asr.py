@@ -18,15 +18,11 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock
-from typing import TYPE_CHECKING
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
 from .settings import APP_DIR, WHISPER_MODELS, WHISPER_REVISION, Settings
-
-if TYPE_CHECKING:
-    from .preview import PreviewText
 
 WHISPER_DIR = APP_DIR / "whisper.cpp"
 WHISPER_RUNTIME_URL = (
@@ -51,6 +47,17 @@ class PreviewResult:
     segments: tuple[PreviewSegment, ...]
     duration: float
     language: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewText:
+    stable: str
+    tentative: str
+    stable_end: float
+
+    @property
+    def text(self) -> str:
+        return f"{self.stable}{self.tentative}".strip()
 
 
 @dataclass(slots=True)

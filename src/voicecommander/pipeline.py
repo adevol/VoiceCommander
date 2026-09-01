@@ -9,8 +9,7 @@ from typing import Any, Callable
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from .local_asr import LocalAsrEngine
-from .preview import PreviewText
+from .local_asr import LocalAsrEngine, PreviewText
 from .prompts import postprocess_prompt
 from .settings import Settings
 

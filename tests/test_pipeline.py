@@ -24,6 +24,7 @@ from voicecommander.local_asr import (
     LocalAsrEngine,
     PreviewResult,
     PreviewSegment,
+    PreviewText,
     WHISPER_RUNTIME_SHA256,
     _WhisperServer,
     _ensure_whisper,
@@ -37,7 +38,7 @@ from voicecommander.pipeline import (
     run_pipeline,
     transcribe_openrouter,
 )
-from voicecommander.preview import PreviewOverlay, PreviewText, transcribe_live
+from voicecommander.preview import PreviewOverlay, transcribe_live
 from voicecommander.settings import (
     WHISPER_MODELS,
     Settings,

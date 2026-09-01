@@ -5,26 +5,15 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Iterator
-from dataclasses import dataclass, replace
+from dataclasses import replace
 
 from .audio import Recorder
-from .local_asr import LocalAsrEngine, PreviewSegment
+from .local_asr import LocalAsrEngine, PreviewSegment, PreviewText
 from .settings import Settings
 
 PREVIEW_INTERVAL = 1.0
 CORRECTION_HORIZON = 2.0
 PREVIEW_MODELS = {"tiny", "base"}
-
-
-@dataclass(frozen=True, slots=True)
-class PreviewText:
-    stable: str
-    tentative: str
-    stable_end: float
-
-    @property
-    def text(self) -> str:
-        return f"{self.stable}{self.tentative}".strip()
 
 
 def transcribe_live(
