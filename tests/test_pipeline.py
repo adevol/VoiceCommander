@@ -185,12 +185,13 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_whisper_engine_appends_a_matching_preview_tail(
         self, transcribe: Mock, start_server: Mock
     ) -> None:
-        start_server.return_value.transcribe.return_value = PreviewResult(
-            "brave new world", (), 3.0
-        )
+        server = Mock()
+        server.process.poll.return_value = None
+        server.transcribe.return_value = PreviewResult("brave new world", (), 3.0)
         engine = LocalAsrEngine(
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
+        engine._server = server
         path = write_wav(b"\0\0" * 16_000 * 6)
         try:
             text = engine.transcribe(path, Settings(), "Hello brave new", 4.0)
@@ -199,7 +200,8 @@ class VoiceCommanderTests(unittest.TestCase):
 
         self.assertEqual(text, "Hello brave new world")
         transcribe.assert_not_called()
-        tail = start_server.return_value.transcribe.call_args.args[0]
+        start_server.assert_not_called()
+        tail = server.transcribe.call_args.args[0]
         self.assertEqual(len(tail), 16_000 * 2 * 4)
 
     @patch("voicecommander.local_asr._start_whisper_server")
@@ -823,7 +825,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         self.assertTrue(first_stop.is_set())
         self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
-        model_future.result.return_value.cancel_preview.assert_called_once_with()
+        model_future.result.return_value.cancel_preview.assert_not_called()
         finish_args = executor_type.return_value.submit.call_args.args
         self.assertEqual(finish_args[-2].language, "de")
         self.assertEqual(finish_args[-1], committed)
