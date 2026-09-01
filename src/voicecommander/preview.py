@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass, replace
 
 from .audio import Recorder
-from .local_asr import LocalAsrEngine
+from .local_asr import LocalAsrEngine, PreviewSegment
 from .settings import Settings
 
 PREVIEW_INTERVAL = 1.0
@@ -19,6 +19,7 @@ PREVIEW_MODELS = {"tiny", "base"}
 class PreviewText:
     stable: str
     tentative: str
+    stable_end: float = 0.0
 
     @property
     def text(self) -> str:
@@ -32,9 +33,10 @@ def transcribe_live(
     stop: threading.Event,
     updates: queue.SimpleQueue[PreviewText | str | None],
     languages: queue.SimpleQueue[str],
+    commits: queue.SimpleQueue[PreviewText],
 ) -> None:
-    previous: tuple[str, ...] | None = None
-    stable: tuple[str, ...] = ()
+    previous: tuple[PreviewSegment, ...] | None = None
+    stable: tuple[PreviewSegment, ...] = ()
     settings_for_recording = settings
     while not stop.wait(PREVIEW_INTERVAL):
         pcm16 = recorder.snapshot()
@@ -56,26 +58,29 @@ def transcribe_live(
                 settings_for_recording = replace(settings_for_recording, language=result.language)
                 languages.put(result.language)
         eligible = tuple(
-            segment.text
+            segment
             for segment in result.segments
             if segment.end <= result.duration - CORRECTION_HORIZON
         )
         if previous is not None:
             confirmed = []
             for before, current in zip(previous, eligible):
-                if before != current:
+                if before.text != current.text:
                     break
                 confirmed.append(current)
-            if tuple(confirmed[: len(stable)]) == stable:
+            if tuple(segment.text for segment in confirmed[: len(stable)]) == tuple(
+                segment.text for segment in stable
+            ):
                 stable = tuple(confirmed)
         previous = eligible
-        stable_text = "".join(stable).strip()
+        stable_text = "".join(segment.text for segment in stable).strip()
         tentative = result.text
         if stable_text and tentative.startswith(stable_text):
             tentative = tentative[len(stable_text) :]
-        update = PreviewText(stable_text, tentative)
+        update = PreviewText(stable_text, tentative, stable[-1].end if stable else 0.0)
         if update.text:
             updates.put(update)
+            commits.put(update)
 
 
 class PreviewOverlay:

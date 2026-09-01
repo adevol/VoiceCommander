@@ -10,6 +10,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .local_asr import LocalAsrEngine
+from .preview import PreviewText
 from .prompts import postprocess_prompt
 from .settings import Settings
 
@@ -191,11 +192,17 @@ def run_pipeline(
     api_key: str,
     markdown: bool = False,
     on_refine: Callable[[str], None] | None = None,
+    preview: PreviewText | None = None,
 ) -> str:
     if settings.asr_provider == "local":
         if loaded_model is None:
             raise RuntimeError("Local ASR model is not loaded")
-        raw = loaded_model.transcribe(path, settings)
+        if preview is not None and preview.stable:
+            raw = loaded_model.transcribe(
+                path, settings, preview.stable, preview.stable_end
+            )
+        else:
+            raw = loaded_model.transcribe(path, settings)
     else:
         raw = transcribe_openrouter(path, settings, api_key)
     if not markdown and settings.postprocess_strength == 0:

@@ -12,7 +12,7 @@ from unittest.mock import Mock, call, patch
 from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
-from voicecommander.audio import Recorder
+from voicecommander.audio import Recorder, write_wav
 from voicecommander.captions import (
     _merge_caption_text,
     _put_latest,
@@ -89,11 +89,16 @@ class VoiceCommanderTests(unittest.TestCase):
         stop.is_set.return_value = False
         updates = queue.SimpleQueue()
         languages = queue.SimpleQueue()
+        commits = queue.SimpleQueue()
 
-        transcribe_live(recorder, model, Settings(), stop, updates, languages)
+        transcribe_live(recorder, model, Settings(), stop, updates, languages, commits)
 
         self.assertEqual(updates.get_nowait(), PreviewText("", "Hello brave"))
-        self.assertEqual(updates.get_nowait(), PreviewText("Hello", " brave world"))
+        self.assertEqual(
+            updates.get_nowait(), PreviewText("Hello", " brave world", 1.0)
+        )
+        commits.get_nowait()
+        self.assertEqual(commits.get_nowait().stable_end, 1.0)
         self.assertEqual(languages.get_nowait(), "de")
         self.assertEqual(
             [call.args[1].language for call in model.preview.call_args_list],
@@ -176,6 +181,50 @@ class VoiceCommanderTests(unittest.TestCase):
         server.close.assert_called_once_with()
 
     @patch("voicecommander.local_asr._start_whisper_server")
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
+    def test_whisper_engine_appends_a_matching_preview_tail(
+        self, transcribe: Mock, start_server: Mock
+    ) -> None:
+        start_server.return_value.transcribe.return_value = PreviewResult(
+            "brave new world", (), 3.0
+        )
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        path = write_wav(b"\0\0" * 16_000 * 6)
+        try:
+            text = engine.transcribe(path, Settings(), "Hello brave new", 4.0)
+        finally:
+            path.unlink()
+
+        self.assertEqual(text, "Hello brave new world")
+        transcribe.assert_not_called()
+        tail = start_server.return_value.transcribe.call_args.args[0]
+        self.assertEqual(len(tail), 16_000 * 2 * 4)
+
+    @patch("voicecommander.local_asr._start_whisper_server")
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
+    def test_whisper_engine_falls_back_when_the_preview_tail_does_not_match(
+        self, transcribe: Mock, start_server: Mock
+    ) -> None:
+        start_server.return_value.transcribe.return_value = PreviewResult(
+            "different words", (), 3.0
+        )
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        path = write_wav(b"\0\0" * 16_000 * 6)
+        try:
+            text = engine.transcribe(path, Settings(), "Hello brave new", 4.0)
+        finally:
+            path.unlink()
+
+        self.assertEqual(text, "full fallback")
+        transcribe.assert_called_once_with(
+            Path("cli.exe"), Path("model.bin"), path, Settings()
+        )
+
+    @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._ensure_whisper")
     def test_whisper_preview_drops_concurrent_requests(
         self, ensure: Mock, start_server: Mock
@@ -221,14 +270,19 @@ class VoiceCommanderTests(unittest.TestCase):
         settings = Settings(postprocess_strength=50)
         engine = Mock()
         engine.transcribe.return_value = "raw transcript"
+        preview = PreviewText("stable words", " tentative", 3.0)
 
         with patch(
             "voicecommander.pipeline.postprocess_openrouter", return_value="edited transcript"
         ) as postprocess:
-            result = run_pipeline(Path("recording.wav"), settings, engine, "secret")
+            result = run_pipeline(
+                Path("recording.wav"), settings, engine, "secret", preview=preview
+            )
 
         self.assertEqual(result, "edited transcript")
-        engine.transcribe.assert_called_once_with(Path("recording.wav"), settings)
+        engine.transcribe.assert_called_once_with(
+            Path("recording.wav"), settings, "stable words", 3.0
+        )
         postprocess.assert_called_once_with(
             "raw transcript", settings, "secret", markdown=False
         )
@@ -763,12 +817,16 @@ class VoiceCommanderTests(unittest.TestCase):
         thread_type.return_value.start.assert_called_once()
 
         first_languages.put("de")
+        committed = PreviewText("Hallo", " Welt", 2.5)
+        app._preview_commits.put(committed)
         app.on_hotkey()
 
         self.assertTrue(first_stop.is_set())
         self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
         model_future.result.return_value.cancel_preview.assert_called_once_with()
-        self.assertEqual(executor_type.return_value.submit.call_args.args[-1].language, "de")
+        finish_args = executor_type.return_value.submit.call_args.args
+        self.assertEqual(finish_args[-2].language, "de")
+        self.assertEqual(finish_args[-1], committed)
 
         app.state = State.IDLE
         app.on_hotkey()
@@ -826,6 +884,7 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("recording.wav"),
             True,
             Settings(asr_provider="openrouter"),
+            None,
         )
         ctrl_pressed.assert_called()
 

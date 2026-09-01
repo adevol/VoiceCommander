@@ -72,6 +72,7 @@ def complete_recording(
     api_key: str,
     markdown: bool = False,
     on_refine: Callable[[str], None] | None = None,
+    preview: PreviewText | None = None,
 ) -> str:
     text = run_pipeline(
         path,
@@ -80,6 +81,7 @@ def complete_recording(
         api_key,
         markdown=markdown,
         on_refine=on_refine,
+        preview=preview,
     )
     deliver_text(text)
     try:
@@ -114,6 +116,7 @@ class VoiceCommander:
         self._preview_stop.set()
         self._preview_updates: queue.SimpleQueue[PreviewText | str | None] = queue.SimpleQueue()
         self._preview_language: queue.SimpleQueue[str] = queue.SimpleQueue()
+        self._preview_commits: queue.SimpleQueue[PreviewText] = queue.SimpleQueue()
         self._menu_open = False
         self._markdown = False
         self._settings_requested = threading.Event()
@@ -215,6 +218,7 @@ class VoiceCommander:
             languages: queue.SimpleQueue[str] = queue.SimpleQueue()
             self._preview_stop = stop
             self._preview_language = languages
+            self._preview_commits = queue.SimpleQueue()
             self._preview_updates.put("Listening")
             threading.Thread(target=self._preview, args=(stop, languages), daemon=True).start()
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
@@ -229,6 +233,7 @@ class VoiceCommander:
                 stop,
                 self._preview_updates,
                 languages,
+                self._preview_commits,
             )
         except Exception as error:
             logger.exception("Live preview failed; recording continues")
@@ -260,7 +265,15 @@ class VoiceCommander:
                 )
             except queue.Empty:
                 pass
-            self.executor.submit(self._finish, path, self._markdown, recording_settings)
+            preview = None
+            while True:
+                try:
+                    preview = self._preview_commits.get_nowait()
+                except queue.Empty:
+                    break
+            self.executor.submit(
+                self._finish, path, self._markdown, recording_settings, preview
+            )
         except Exception as error:
             self._preview_stop.set()
             self._preview_updates.put(None)
@@ -278,7 +291,11 @@ class VoiceCommander:
                 self._stop_recording()
 
     def _finish(
-        self, path: Path, markdown: bool = False, settings: Settings | None = None
+        self,
+        path: Path,
+        markdown: bool = False,
+        settings: Settings | None = None,
+        preview: PreviewText | None = None,
     ) -> None:
         settings = settings or self.settings
         try:
@@ -291,6 +308,7 @@ class VoiceCommander:
                 key,
                 markdown=markdown,
                 on_refine=lambda text: self._preview_updates.put(text or "Refining"),
+                preview=preview,
             )
             _beep(1100)
         except Exception as error:

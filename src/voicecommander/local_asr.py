@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import socket
+import string
 import subprocess
 import tempfile
 import time
@@ -29,6 +30,7 @@ WHISPER_RUNTIME_URL = (
 )
 WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 logger = logging.getLogger(__name__)
+FINAL_OVERLAP_SECONDS = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +58,12 @@ class LocalAsrEngine:
 
     def preview(self, pcm16: bytes, settings: Settings) -> PreviewResult | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
-        if not self._preview_lock.acquire(blocking=False):
+        return self._decode_pcm(pcm16, settings, blocking=False)
+
+    def _decode_pcm(
+        self, pcm16: bytes, settings: Settings, *, blocking: bool
+    ) -> PreviewResult | None:
+        if not self._preview_lock.acquire(blocking=blocking):
             return None
         try:
             self._preview_cancel.clear()
@@ -68,7 +75,37 @@ class LocalAsrEngine:
         finally:
             self._preview_lock.release()
 
-    def transcribe(self, path: Path, settings: Settings) -> str:
+    def transcribe(
+        self,
+        path: Path,
+        settings: Settings,
+        prefix: str = "",
+        prefix_end: float = 0.0,
+    ) -> str:
+        if prefix and prefix_end > FINAL_OVERLAP_SECONDS:
+            try:
+                tail_start = prefix_end - FINAL_OVERLAP_SECONDS
+                with wave.open(str(path), "rb") as source:
+                    source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
+                    tail = source.readframes(source.getnframes())
+                result = self._decode_pcm(tail, settings, blocking=True)
+                if result is not None:
+                    before = prefix.split()
+                    after = result.text.split()
+                    before_keys = [
+                        word.strip(string.punctuation).casefold() for word in before
+                    ]
+                    after_keys = [
+                        word.strip(string.punctuation).casefold() for word in after
+                    ]
+                    for count in range(min(len(before), len(after)), 1, -1):
+                        if before_keys[-count:] == after_keys[:count]:
+                            return " ".join(before + after[count:])
+            except Exception:
+                logger.warning(
+                    "Could not finalize from the committed preview; decoding the full file",
+                    exc_info=True,
+                )
         return _transcribe_whisper(self.executable, self.model, path, settings)
 
     def cancel_preview(self) -> None:
