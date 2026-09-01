@@ -192,9 +192,9 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
         engine._server = server
-        path = write_wav(b"\0\0" * 16_000 * 6)
+        path = write_wav(b"\0\0" * 16_000 * 26)
         try:
-            text = engine.transcribe(path, Settings(), "Hello brave new", 4.0)
+            text = engine.transcribe(path, Settings(), "Hello brave new", 24.0)
         finally:
             path.unlink()
 
@@ -215,9 +215,9 @@ class VoiceCommanderTests(unittest.TestCase):
         engine = LocalAsrEngine(
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
-        path = write_wav(b"\0\0" * 16_000 * 6)
+        path = write_wav(b"\0\0" * 16_000 * 26)
         try:
-            text = engine.transcribe(path, Settings(), "Hello brave new", 4.0)
+            text = engine.transcribe(path, Settings(), "Hello brave new", 24.0)
         finally:
             path.unlink()
 
@@ -225,6 +225,24 @@ class VoiceCommanderTests(unittest.TestCase):
         transcribe.assert_called_once_with(
             Path("cli.exe"), Path("model.bin"), path, Settings()
         )
+
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full transcript")
+    def test_short_preview_uses_the_full_decode(self, transcribe: Mock) -> None:
+        server = Mock()
+        server.process.poll.return_value = None
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        engine._server = server
+        path = write_wav(b"\0\0" * 16_000 * 6)
+        try:
+            text = engine.transcribe(path, Settings(), "Hello", 4.0)
+        finally:
+            path.unlink()
+
+        self.assertEqual(text, "full transcript")
+        server.transcribe.assert_not_called()
+        transcribe.assert_called_once()
 
     @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._ensure_whisper")

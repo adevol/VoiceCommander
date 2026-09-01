@@ -31,6 +31,7 @@ WHISPER_RUNTIME_URL = (
 WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 logger = logging.getLogger(__name__)
 FINAL_OVERLAP_SECONDS = 2.0
+MIN_SAVED_PREFIX_SECONDS = 20.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +83,10 @@ class LocalAsrEngine:
         prefix: str = "",
         prefix_end: float = 0.0,
     ) -> str:
-        if prefix and prefix_end > FINAL_OVERLAP_SECONDS:
+        if (
+            prefix
+            and prefix_end - FINAL_OVERLAP_SECONDS >= MIN_SAVED_PREFIX_SECONDS
+        ):
             try:
                 tail_start = prefix_end - FINAL_OVERLAP_SECONDS
                 with wave.open(str(path), "rb") as source:
