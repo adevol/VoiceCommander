@@ -114,7 +114,7 @@ class LocalAsrEngine:
                     for count in range(min(len(before), len(after)), 2, -1):
                         if before_keys[-count:] == after_keys[:count]:
                             return " ".join(before + after[count:])
-            except Exception:
+            except (OSError, EOFError, RuntimeError, wave.Error):
                 logger.warning(
                     "Could not finalize from the committed preview; decoding the full file",
                     exc_info=True,

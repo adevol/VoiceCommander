@@ -281,6 +281,52 @@ class VoiceCommanderTests(unittest.TestCase):
         server.transcribe.assert_not_called()
         transcribe.assert_called_once()
 
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
+    def test_tail_decoder_failure_falls_back_to_full_decode(
+        self, transcribe: Mock
+    ) -> None:
+        server = Mock()
+        server.process.poll.return_value = None
+        server.transcribe.side_effect = RuntimeError("decoder stopped")
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        engine._server = server
+        path = write_wav(b"\0\0" * 16_000 * 26)
+        try:
+            with self.assertLogs("voicecommander.local_asr", level="WARNING"):
+                text = engine.transcribe(
+                    path, Settings(), PreviewText("Long stable prefix", "", 24.0)
+                )
+        finally:
+            path.unlink()
+
+        self.assertEqual(text, "full fallback")
+        transcribe.assert_called_once()
+
+    @patch("voicecommander.local_asr._transcribe_whisper")
+    def test_tail_programming_error_is_not_swallowed(self, transcribe: Mock) -> None:
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        path = write_wav(b"\0\0" * 16_000 * 26)
+        try:
+            with (
+                patch.object(
+                    LocalAsrEngine,
+                    "_decode_pcm",
+                    side_effect=ValueError("programming error"),
+                ),
+                self.assertRaisesRegex(ValueError, "programming error"),
+            ):
+                engine.transcribe(
+                    path, Settings(), PreviewText("Long stable prefix", "", 24.0)
+                )
+        finally:
+            path.unlink()
+
+        transcribe.assert_not_called()
+
     @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._ensure_whisper")
     def test_whisper_preview_drops_concurrent_requests(
