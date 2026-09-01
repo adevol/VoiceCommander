@@ -70,16 +70,19 @@ class VoiceCommanderTests(unittest.TestCase):
         model.preview.side_effect = [
             PreviewResult(
                 "Hello brave",
-                (PreviewSegment("Hello", 1.0), PreviewSegment(" brave", 3.5)),
+                (
+                    PreviewSegment("Hello", 0.0, 1.0),
+                    PreviewSegment(" brave", 1.0, 3.5),
+                ),
                 4.0,
                 "de",
             ),
             PreviewResult(
                 "Hello brave world",
                 (
-                    PreviewSegment("Hello", 1.0),
-                    PreviewSegment(" brave", 3.0),
-                    PreviewSegment(" world", 4.5),
+                    PreviewSegment("Hello", 0.0, 1.0),
+                    PreviewSegment(" brave", 1.0, 3.0),
+                    PreviewSegment(" world", 3.0, 4.5),
                 ),
                 5.0,
             ),
@@ -121,7 +124,8 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_preview_server_parses_timestamped_results(self, urlopen: Mock) -> None:
         urlopen.return_value = BytesIO(
             b'{"text":"Hello world","duration":3.0,"segments":'
-            b'[{"text":"Hello","end":1.0},{"text":" world","end":2.5}],'
+            b'[{"text":"Hello","start":0.0,"end":1.0},'
+            b'{"text":" world","start":1.0,"end":2.5}],'
             b'"language_probabilities":{"en":0.1,"de":0.9}}'
         )
         server = _WhisperServer(Mock(), "http://127.0.0.1:1")
@@ -132,7 +136,10 @@ class VoiceCommanderTests(unittest.TestCase):
             result,
             PreviewResult(
                 "Hello world",
-                (PreviewSegment("Hello", 1.0), PreviewSegment(" world", 2.5)),
+                (
+                    PreviewSegment("Hello", 0.0, 1.0),
+                    PreviewSegment(" world", 1.0, 2.5),
+                ),
                 3.0,
                 "de",
             ),
@@ -155,7 +162,7 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("model.bin"),
         )
         server = start_server.return_value
-        preview = PreviewResult("Hallo", (PreviewSegment("Hallo", 1.0),), 1.0)
+        preview = PreviewResult("Hallo", (PreviewSegment("Hallo", 0.0, 1.0),), 1.0)
         server.transcribe.return_value = preview
         settings = Settings(language="de-DE")
 
@@ -183,7 +190,11 @@ class VoiceCommanderTests(unittest.TestCase):
     ) -> None:
         server = Mock()
         server.process.poll.return_value = None
-        server.transcribe.return_value = PreviewResult("brave new world", (), 3.0)
+        server.transcribe.return_value = PreviewResult(
+            "brave new bright world",
+            (PreviewSegment("brave new bright world", 0.2, 3.0),),
+            3.0,
+        )
         engine = LocalAsrEngine(
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
@@ -191,12 +202,12 @@ class VoiceCommanderTests(unittest.TestCase):
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             text = engine.transcribe(
-                path, Settings(), PreviewText("Hello brave new", "", 24.0)
+                path, Settings(), PreviewText("Hello brave new bright", "", 24.0)
             )
         finally:
             path.unlink()
 
-        self.assertEqual(text, "Hello brave new world")
+        self.assertEqual(text, "Hello brave new bright world")
         transcribe.assert_not_called()
         start_server.assert_not_called()
         tail = server.transcribe.call_args.args[0]
@@ -226,6 +237,32 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("cli.exe"), Path("model.bin"), path, Settings()
         )
 
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
+    def test_whisper_engine_rejects_a_match_after_the_overlap(
+        self, transcribe: Mock
+    ) -> None:
+        server = Mock()
+        server.process.poll.return_value = None
+        server.transcribe.return_value = PreviewResult(
+            "and the actual tail",
+            (PreviewSegment("and the actual tail", 2.1, 4.0),),
+            4.0,
+        )
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        engine._server = server
+        path = write_wav(b"\0\0" * 16_000 * 26)
+        try:
+            text = engine.transcribe(
+                path, Settings(), PreviewText("Earlier words and the", "", 24.0)
+            )
+        finally:
+            path.unlink()
+
+        self.assertEqual(text, "full fallback")
+        transcribe.assert_called_once()
+
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full transcript")
     def test_short_preview_uses_the_full_decode(self, transcribe: Mock) -> None:
         server = Mock()
@@ -253,7 +290,7 @@ class VoiceCommanderTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        preview = PreviewResult("first", (PreviewSegment("first", 1.0),), 1.0)
+        preview = PreviewResult("first", (PreviewSegment("first", 0.0, 1.0),), 1.0)
 
         def transcribe(data: bytes, settings: Settings) -> PreviewResult:
             entered.set()
@@ -483,7 +520,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         def finish(*_args) -> PreviewResult:
             stop.set()
-            return PreviewResult("Hello", (PreviewSegment("Hello", 1.0),), 1.0)
+            return PreviewResult("Hello", (PreviewSegment("Hello", 0.0, 1.0),), 1.0)
 
         model.preview.side_effect = finish
         with patch("voicecommander.captions.load_local_model", return_value=model) as load:

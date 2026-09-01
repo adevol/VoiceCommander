@@ -41,6 +41,7 @@ MIN_SAVED_PREFIX_SECONDS = 20.0
 @dataclass(frozen=True, slots=True)
 class PreviewSegment:
     text: str
+    start: float
     end: float
 
 
@@ -98,7 +99,10 @@ class LocalAsrEngine:
                     source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                     tail = source.readframes(source.getnframes())
                 result = self._decode_pcm(tail, settings, blocking=True)
-                if result is not None:
+                if (
+                    result.segments
+                    and result.segments[0].start <= FINAL_OVERLAP_SECONDS
+                ):
                     before = preview.stable.split()
                     after = result.text.split()
                     before_keys = [
@@ -107,7 +111,7 @@ class LocalAsrEngine:
                     after_keys = [
                         word.strip(string.punctuation).casefold() for word in after
                     ]
-                    for count in range(min(len(before), len(after)), 1, -1):
+                    for count in range(min(len(before), len(after)), 2, -1):
                         if before_keys[-count:] == after_keys[:count]:
                             return " ".join(before + after[count:])
             except Exception:
@@ -164,10 +168,15 @@ class _WhisperServer:
             if (
                 not isinstance(segment, dict)
                 or not isinstance(segment.get("text"), str)
+                or not isinstance(segment.get("start"), (int, float))
                 or not isinstance(segment.get("end"), (int, float))
             ):
                 raise RuntimeError("Whisper preview returned an invalid response")
-            segments.append(PreviewSegment(segment["text"], float(segment["end"])))
+            segments.append(
+                PreviewSegment(
+                    segment["text"], float(segment["start"]), float(segment["end"])
+                )
+            )
         probabilities = result.get("language_probabilities", {})
         language = None
         if isinstance(probabilities, dict):
