@@ -37,11 +37,15 @@ flowchart TD
     E --> B
 
     D --> F[Optional local preview]
+    F --> S[Confirmed prefix plus open tail]
     D -->|Press hotkey again| G[Create temporary WAV]
     G --> H{Transcription provider}
-    H -->|Local default| I[Whisper]
+    H -->|Local default| I[Finalize from confirmed prefix]
     H -.->|OpenRouter| J[Cloud audio model]
-    I --> K[Final transcript]
+    S --> I
+    I -->|Overlap matches| K[Final transcript]
+    I -->|No safe match| T[Full-file Whisper fallback]
+    T --> K
     J --> K
     K --> L{Cleanup or Markdown?}
     L -->|No| M[Paste once at cursor]
@@ -57,16 +61,23 @@ flowchart TD
 
 ## Where your data goes
 
-Each recording becomes a temporary WAV file. By default, one local ASR session
-turns it into a final transcript, which VoiceCommander pastes once.
+Each recording becomes a temporary WAV file. With a local `tiny` or `base`
+preview, VoiceCommander confirms older segments that agree across consecutive
+passes. When recording stops, it keeps that confirmed prefix and transcribes
+the remaining audio with two seconds of overlap. It appends the tail only when
+at least two overlap words match. Otherwise it runs the existing full-file
+Whisper transcription. Tentative preview text is never committed.
 
 ```mermaid
 flowchart LR
     A[Microphone] --> B[Temporary WAV]
-    A -->|tiny or base| P[Local preview overlay]
-    B -->|Default| C[Local ASR session]
+    A -->|tiny or base| P[Confirmed prefix plus open tail]
+    B -->|Default| C[Overlapped tail finalization]
+    P --> C
+    C -. Unsafe join .-> H[Full-file Whisper fallback]
     B -. Cloud transcription .-> D[OpenRouter audio model]
     C --> E[Final transcript]
+    H --> E
     D --> E
     E --> F[Paste once]
     E -. Optional cleanup as text .-> G[OpenRouter text model]
