@@ -40,11 +40,11 @@ flowchart TD
     F --> S[Confirmed prefix plus open tail]
     D -->|Press hotkey again| G[Create temporary WAV]
     G --> H{Transcription provider}
-    H -->|Local default| I[Finalize from confirmed prefix]
+    H -->|Local default| I[Reuse warm server for long confirmed prefix]
     H -.->|OpenRouter| J[Cloud audio model]
     S --> I
     I -->|Overlap matches| K[Final transcript]
-    I -->|No safe match| T[Full-file Whisper fallback]
+    I -->|Short recording or no safe match| T[Full-file Whisper fallback]
     T --> K
     J --> K
     K --> L{Cleanup or Markdown?}
@@ -63,18 +63,20 @@ flowchart TD
 
 Each recording becomes a temporary WAV file. With a local `tiny` or `base`
 preview, VoiceCommander confirms older segments that agree across consecutive
-passes. When recording stops, it keeps that confirmed prefix and transcribes
-the remaining audio with two seconds of overlap. It appends the tail only when
-at least two overlap words match. Otherwise it runs the existing full-file
-Whisper transcription. Tentative preview text is never committed.
+passes. When that prefix lets a long recording skip at least 20 seconds,
+VoiceCommander keeps the preview server warm and transcribes the remaining
+audio with two seconds of overlap. It appends the tail only when at least three
+words match and the match starts inside that overlap. Short recordings and
+unsafe joins use the existing full-file Whisper transcription. Tentative
+preview text is never committed.
 
 ```mermaid
 flowchart LR
     A[Microphone] --> B[Temporary WAV]
     A -->|tiny or base| P[Confirmed prefix plus open tail]
-    B -->|Default| C[Overlapped tail finalization]
+    B -->|Long local recording| C[Warm overlapped-tail finalization]
     P --> C
-    C -. Unsafe join .-> H[Full-file Whisper fallback]
+    C -. Short or unsafe join .-> H[Full-file Whisper fallback]
     B -. Cloud transcription .-> D[OpenRouter audio model]
     C --> E[Final transcript]
     H --> E
