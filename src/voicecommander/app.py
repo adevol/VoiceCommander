@@ -116,7 +116,7 @@ class VoiceCommander:
         self._preview_stop.set()
         self._preview_updates: queue.SimpleQueue[PreviewText | str | None] = queue.SimpleQueue()
         self._preview_language: queue.SimpleQueue[str] = queue.SimpleQueue()
-        self._preview_commits: queue.SimpleQueue[PreviewText] = queue.SimpleQueue()
+        self._preview_commit: PreviewText | None = None
         self._menu_open = False
         self._markdown = False
         self._settings_requested = threading.Event()
@@ -218,7 +218,7 @@ class VoiceCommander:
             languages: queue.SimpleQueue[str] = queue.SimpleQueue()
             self._preview_stop = stop
             self._preview_language = languages
-            self._preview_commits = queue.SimpleQueue()
+            self._preview_commit = None
             self._preview_updates.put("Listening")
             threading.Thread(target=self._preview, args=(stop, languages), daemon=True).start()
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
@@ -226,15 +226,15 @@ class VoiceCommander:
 
     def _preview(self, stop: threading.Event, languages: queue.SimpleQueue[str]) -> None:
         try:
-            transcribe_live(
+            for update in transcribe_live(
                 self.recorder,
                 self._local_model.result(),
                 self.settings,
                 stop,
-                self._preview_updates,
                 languages,
-                self._preview_commits,
-            )
+            ):
+                self._preview_commit = update
+                self._preview_updates.put(update)
         except Exception as error:
             logger.exception("Live preview failed; recording continues")
             if not stop.is_set():
@@ -257,14 +257,12 @@ class VoiceCommander:
                 )
             except queue.Empty:
                 pass
-            preview = None
-            while True:
-                try:
-                    preview = self._preview_commits.get_nowait()
-                except queue.Empty:
-                    break
             self.executor.submit(
-                self._finish, path, self._markdown, recording_settings, preview
+                self._finish,
+                path,
+                self._markdown,
+                recording_settings,
+                self._preview_commit,
             )
         except Exception as error:
             self._preview_stop.set()

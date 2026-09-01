@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 
 from .audio import Recorder
@@ -31,10 +32,8 @@ def transcribe_live(
     model: LocalAsrEngine,
     settings: Settings,
     stop: threading.Event,
-    updates: queue.SimpleQueue[PreviewText | str | None],
     languages: queue.SimpleQueue[str],
-    commits: queue.SimpleQueue[PreviewText],
-) -> None:
+) -> Iterator[PreviewText]:
     previous: tuple[PreviewSegment, ...] | None = None
     stable: tuple[PreviewSegment, ...] = ()
     settings_for_recording = settings
@@ -79,8 +78,7 @@ def transcribe_live(
             tentative = tentative[len(stable_text) :]
         update = PreviewText(stable_text, tentative, stable[-1].end if stable else 0.0)
         if update.text:
-            updates.put(update)
-            commits.put(update)
+            yield update
 
 
 class PreviewOverlay:

@@ -87,18 +87,14 @@ class VoiceCommanderTests(unittest.TestCase):
         stop = Mock()
         stop.wait.side_effect = [False, False, True]
         stop.is_set.return_value = False
-        updates = queue.SimpleQueue()
         languages = queue.SimpleQueue()
-        commits = queue.SimpleQueue()
 
-        transcribe_live(recorder, model, Settings(), stop, updates, languages, commits)
+        updates = list(transcribe_live(recorder, model, Settings(), stop, languages))
 
-        self.assertEqual(updates.get_nowait(), PreviewText("", "Hello brave"))
+        self.assertEqual(updates[0], PreviewText("", "Hello brave"))
         self.assertEqual(
-            updates.get_nowait(), PreviewText("Hello", " brave world", 1.0)
+            updates[1], PreviewText("Hello", " brave world", 1.0)
         )
-        commits.get_nowait()
-        self.assertEqual(commits.get_nowait().stable_end, 1.0)
         self.assertEqual(languages.get_nowait(), "de")
         self.assertEqual(
             [call.args[1].language for call in model.preview.call_args_list],
@@ -838,7 +834,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         first_languages.put("de")
         committed = PreviewText("Hallo", " Welt", 2.5)
-        app._preview_commits.put(committed)
+        app._preview_commit = committed
         app.on_hotkey()
 
         self.assertTrue(first_stop.is_set())
