@@ -91,7 +91,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         updates = list(transcribe_live(recorder, model, Settings(), stop, languages))
 
-        self.assertEqual(updates[0], PreviewText("", "Hello brave"))
+        self.assertEqual(updates[0], PreviewText("", "Hello brave", 0.0))
         self.assertEqual(
             updates[1], PreviewText("Hello", " brave world", 1.0)
         )
@@ -107,7 +107,7 @@ class VoiceCommanderTests(unittest.TestCase):
         tkinter.Label.return_value.winfo_reqwidth.return_value = 300
         tkinter.Label.return_value.winfo_reqheight.return_value = 40
         updates = queue.SimpleQueue()
-        updates.put(PreviewText("Hello", " world"))
+        updates.put(PreviewText("Hello", " world", 1.0))
 
         with patch.dict(modules, {"tkinter": tkinter}):
             overlay = PreviewOverlay()
@@ -190,7 +190,9 @@ class VoiceCommanderTests(unittest.TestCase):
         engine._server = server
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
-            text = engine.transcribe(path, Settings(), "Hello brave new", 24.0)
+            text = engine.transcribe(
+                path, Settings(), PreviewText("Hello brave new", "", 24.0)
+            )
         finally:
             path.unlink()
 
@@ -213,7 +215,9 @@ class VoiceCommanderTests(unittest.TestCase):
         )
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
-            text = engine.transcribe(path, Settings(), "Hello brave new", 24.0)
+            text = engine.transcribe(
+                path, Settings(), PreviewText("Hello brave new", "", 24.0)
+            )
         finally:
             path.unlink()
 
@@ -232,7 +236,7 @@ class VoiceCommanderTests(unittest.TestCase):
         engine._server = server
         path = write_wav(b"\0\0" * 16_000 * 6)
         try:
-            text = engine.transcribe(path, Settings(), "Hello", 4.0)
+            text = engine.transcribe(path, Settings(), PreviewText("Hello", "", 4.0))
         finally:
             path.unlink()
 
@@ -296,9 +300,7 @@ class VoiceCommanderTests(unittest.TestCase):
             )
 
         self.assertEqual(result, "edited transcript")
-        engine.transcribe.assert_called_once_with(
-            Path("recording.wav"), settings, "stable words", 3.0
-        )
+        engine.transcribe.assert_called_once_with(Path("recording.wav"), settings, preview)
         postprocess.assert_called_once_with(
             "raw transcript", settings, "secret", markdown=False
         )

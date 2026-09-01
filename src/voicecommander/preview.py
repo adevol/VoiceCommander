@@ -20,7 +20,7 @@ PREVIEW_MODELS = {"tiny", "base"}
 class PreviewText:
     stable: str
     tentative: str
-    stable_end: float = 0.0
+    stable_end: float
 
     @property
     def text(self) -> str:

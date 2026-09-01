@@ -18,11 +18,15 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock
+from typing import TYPE_CHECKING
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
 from .settings import APP_DIR, WHISPER_MODELS, WHISPER_REVISION, Settings
+
+if TYPE_CHECKING:
+    from .preview import PreviewText
 
 WHISPER_DIR = APP_DIR / "whisper.cpp"
 WHISPER_RUNTIME_URL = (
@@ -80,21 +84,22 @@ class LocalAsrEngine:
         self,
         path: Path,
         settings: Settings,
-        prefix: str = "",
-        prefix_end: float = 0.0,
+        preview: PreviewText | None = None,
     ) -> str:
         if (
-            prefix
-            and prefix_end - FINAL_OVERLAP_SECONDS >= MIN_SAVED_PREFIX_SECONDS
+            preview is not None
+            and preview.stable
+            and preview.stable_end - FINAL_OVERLAP_SECONDS
+            >= MIN_SAVED_PREFIX_SECONDS
         ):
             try:
-                tail_start = prefix_end - FINAL_OVERLAP_SECONDS
+                tail_start = preview.stable_end - FINAL_OVERLAP_SECONDS
                 with wave.open(str(path), "rb") as source:
                     source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                     tail = source.readframes(source.getnframes())
                 result = self._decode_pcm(tail, settings, blocking=True)
                 if result is not None:
-                    before = prefix.split()
+                    before = preview.stable.split()
                     after = result.text.split()
                     before_keys = [
                         word.strip(string.punctuation).casefold() for word in before
