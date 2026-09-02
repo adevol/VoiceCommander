@@ -14,7 +14,7 @@ import time
 import unicodedata
 import wave
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock
@@ -98,15 +98,13 @@ class LocalAsrEngine:
         finally:
             self._preview_lock.release()
 
-    def _decode_pcm(
-        self, pcm16: bytes, settings: Settings, prompt: str = ""
-    ) -> PreviewResult:
+    def _decode_pcm(self, pcm16: bytes, settings: Settings) -> PreviewResult:
         self._preview_cancel.clear()
         if self._server is None or self._server.process.poll() is not None:
             self._server = _start_whisper_server(
                 self.server_executable, self.model, self._preview_cancel
             )
-        return self._server.transcribe(pcm16, settings, prompt)
+        return self._server.transcribe(pcm16, settings)
 
     def transcribe(
         self,
@@ -136,12 +134,13 @@ class LocalAsrEngine:
             with wave.open(str(path), "rb") as source:
                 source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                 tail = source.readframes(source.getnframes())
+            tail_prompt = " ".join(preview.stable.split()[-TAIL_PROMPT_WORDS:])
+            tail_settings = replace(
+                settings,
+                vocabulary=" ".join(filter(None, (settings.vocabulary, tail_prompt))),
+            )
             with self._preview_lock:
-                result = self._decode_pcm(
-                    tail,
-                    settings,
-                    " ".join(preview.stable.split()[-TAIL_PROMPT_WORDS:]),
-                )
+                result = self._decode_pcm(tail, tail_settings)
         except (OSError, EOFError, RuntimeError, wave.Error):
             logger.warning(
                 "Could not finalize from the committed preview; decoding the full file",
@@ -167,10 +166,8 @@ class _WhisperServer:
     process: subprocess.Popen
     url: str
 
-    def transcribe(
-        self, pcm16: bytes, settings: Settings, prompt: str = ""
-    ) -> PreviewResult:
-        boundary, body = _preview_request(pcm16, settings, prompt)
+    def transcribe(self, pcm16: bytes, settings: Settings) -> PreviewResult:
+        boundary, body = _preview_request(pcm16, settings)
         request = Request(
             self.url + "/inference",
             data=body,
@@ -301,9 +298,7 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
     return executable, WHISPER_DIR / "whisper-server.exe", model
 
 
-def _preview_request(
-    pcm16: bytes, settings: Settings, prompt: str = ""
-) -> tuple[str, bytes]:
+def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
     wav = BytesIO()
     with wave.open(wav, "wb") as output:
         output.setnchannels(CHANNELS)
@@ -318,9 +313,8 @@ def _preview_request(
         "temperature": "0",
         "token_timestamps": "false",
     }
-    initial_prompt = " ".join(filter(None, (settings.vocabulary, prompt)))
-    if initial_prompt:
-        fields |= {"prompt": initial_prompt, "carry_initial_prompt": "true"}
+    if settings.vocabulary:
+        fields |= {"prompt": settings.vocabulary, "carry_initial_prompt": "true"}
     body = bytearray()
     for name, value in fields.items():
         body.extend(

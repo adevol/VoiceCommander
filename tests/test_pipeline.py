@@ -265,10 +265,11 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
         engine._server = server
+        settings = Settings(vocabulary="VoiceCommander")
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             text = engine.transcribe(
-                path, Settings(), PreviewText(prefix, "", 24.0)
+                path, settings, PreviewText(prefix, "", 24.0)
             )
         finally:
             path.unlink()
@@ -279,7 +280,8 @@ class VoiceCommanderTests(unittest.TestCase):
         tail = server.transcribe.call_args.args[0]
         self.assertEqual(len(tail), 16_000 * 2 * 4)
         self.assertEqual(
-            server.transcribe.call_args.args[2], " ".join(prefix_words[-50:])
+            server.transcribe.call_args.args[1].vocabulary,
+            f"VoiceCommander {' '.join(prefix_words[-50:])}",
         )
 
     @patch("voicecommander.local_asr._start_whisper_server")
@@ -411,7 +413,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         preview = PreviewResult("first", (PreviewSegment("first", 1.0),), 1.0)
 
-        def transcribe(data: bytes, settings: Settings, prompt: str) -> PreviewResult:
+        def transcribe(data: bytes, settings: Settings) -> PreviewResult:
             entered.set()
             release.wait(1)
             return preview
