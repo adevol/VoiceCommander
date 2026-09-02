@@ -36,7 +36,7 @@ class Recorder:
 
     def __init__(self, input_device: str = "") -> None:
         self.input_device = input_device
-        self._chunks: list[bytes] = []
+        self._chunks = bytearray()
         self._stream = None
         self._lock = Lock()
 
@@ -67,11 +67,12 @@ class Recorder:
         if status:
             logger.warning("Audio callback status: %s", status)
         with self._lock:
-            self._chunks.append(bytes(data))
+            self._chunks.extend(data)
 
-    def snapshot(self) -> bytes:
+    def snapshot(self, start: int = 0, length: int | None = None) -> bytes:
         with self._lock:
-            return b"".join(self._chunks)
+            end = start + length if length is not None else None
+            return bytes(self._chunks[start:end])
 
     def stop(self) -> Path:
         with self._lock:
@@ -83,7 +84,7 @@ class Recorder:
         with self._lock:
             if not self._chunks:
                 raise RuntimeError("No audio was recorded")
-            data = b"".join(self._chunks)
+            data = bytes(self._chunks)
             self._chunks.clear()
         path = write_wav(data)
         return path

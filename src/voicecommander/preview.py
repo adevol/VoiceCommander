@@ -7,11 +7,17 @@ import threading
 from collections.abc import Iterator
 from dataclasses import replace
 
-from .audio import Recorder
-from .local_asr import LocalAsrEngine, PreviewSegment, PreviewText
+from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH, Recorder
+from .local_asr import (
+    LocalAsrEngine,
+    PreviewSegment,
+    PreviewText,
+    merge_overlapping_text,
+)
 from .settings import Settings
 
-PREVIEW_INTERVAL = 1.0
+PREVIEW_INTERVAL = 2.0
+PREVIEW_WINDOW_SECONDS = 8.0
 CORRECTION_HORIZON = 2.0
 PREVIEW_MODELS = {"tiny", "base"}
 
@@ -24,10 +30,19 @@ def transcribe_live(
     languages: queue.SimpleQueue[str],
 ) -> Iterator[PreviewText]:
     previous: tuple[PreviewSegment, ...] | None = None
-    stable: tuple[PreviewSegment, ...] = ()
+    previous_start = 0.0
+    stable_text = ""
+    stable_end = 0.0
     settings_for_recording = settings
     while not stop.wait(PREVIEW_INTERVAL):
-        pcm16 = recorder.snapshot()
+        window_start = max(0.0, stable_end - CORRECTION_HORIZON)
+        if window_start != previous_start:
+            previous = None
+            previous_start = window_start
+        bytes_per_second = SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH
+        first_byte = round(window_start * SAMPLE_RATE) * CHANNELS * SAMPLE_WIDTH
+        window_bytes = round(PREVIEW_WINDOW_SECONDS * bytes_per_second)
+        pcm16 = recorder.snapshot(first_byte, window_bytes)
         if not pcm16:
             continue
         if stop.is_set():
@@ -46,7 +61,7 @@ def transcribe_live(
                 settings_for_recording = replace(settings_for_recording, language=result.language)
                 languages.put(result.language)
         eligible = tuple(
-            segment
+            PreviewSegment(segment.text, segment.end + window_start)
             for segment in result.segments
             if segment.end <= result.duration - CORRECTION_HORIZON
         )
@@ -56,16 +71,23 @@ def transcribe_live(
                 if before.text != current.text:
                     break
                 confirmed.append(current)
-            if tuple(segment.text for segment in confirmed[: len(stable)]) == tuple(
-                segment.text for segment in stable
-            ):
-                stable = tuple(confirmed)
+            confirmed_text = "".join(segment.text for segment in confirmed).strip()
+            joined = (
+                merge_overlapping_text(stable_text, confirmed_text)
+                if stable_text
+                else confirmed_text
+            )
+            # Timestamps wobble between decodes; repeated text is the stable signal.
+            if joined and joined != stable_text:
+                stable_text = joined
+                stable_end = confirmed[-1].end
         previous = eligible
-        stable_text = "".join(segment.text for segment in stable).strip()
         tentative = result.text
-        if stable_text and tentative.startswith(stable_text):
-            tentative = tentative[len(stable_text) :]
-        update = PreviewText(stable_text, tentative, stable[-1].end if stable else 0.0)
+        if stable_text:
+            combined = merge_overlapping_text(stable_text, tentative)
+            if combined is not None:
+                tentative = combined[len(stable_text) :]
+        update = PreviewText(stable_text, tentative, stable_end)
         if update.text:
             yield update
 

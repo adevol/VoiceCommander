@@ -59,10 +59,10 @@ def run_first_tk_poll(root: Mock) -> None:
 class VoiceCommanderTests(unittest.TestCase):
     def test_recorder_snapshot_does_not_consume_final_audio(self) -> None:
         recorder = Recorder()
-        recorder._chunks = [b"first", b"second"]
+        recorder._chunks.extend(b"firstsecond")
 
         self.assertEqual(recorder.snapshot(), b"firstsecond")
-        self.assertEqual(recorder._chunks, [b"first", b"second"])
+        self.assertEqual(recorder._chunks, bytearray(b"firstsecond"))
 
     def test_live_preview_publishes_the_latest_transcript(self) -> None:
         recorder = Mock()
@@ -104,6 +104,69 @@ class VoiceCommanderTests(unittest.TestCase):
             [call.args[1].language for call in model.preview.call_args_list],
             ["auto", "de"],
         )
+
+    def test_live_preview_decodes_bounded_windows_with_absolute_commit_times(self) -> None:
+        bytes_per_second = 16_000 * 2
+        recorder = Mock()
+        recording = b"\0" * bytes_per_second * 20
+        recorder.snapshot.side_effect = lambda start=0, length=None: recording[
+            start : start + length if length is not None else None
+        ]
+        first_window = PreviewResult(
+            "zero one two three",
+            (
+                PreviewSegment("zero", 2.0),
+                PreviewSegment(" one", 4.0),
+                PreviewSegment(" two", 7.0),
+            ),
+            8.0,
+        )
+        second_window = PreviewResult(
+            "one two three four",
+            (
+                PreviewSegment("one", 2.0),
+                PreviewSegment(" two", 4.0),
+                PreviewSegment(" three", 6.0),
+                PreviewSegment(" four", 7.5),
+            ),
+            8.0,
+        )
+        model = Mock()
+        model.preview.side_effect = [
+            first_window,
+            first_window,
+            second_window,
+            second_window,
+        ]
+        stop = Mock()
+        stop.wait.side_effect = [False, False, False, False, True]
+        stop.is_set.return_value = False
+
+        updates = list(
+            transcribe_live(
+                recorder, model, Settings(), stop, queue.SimpleQueue()
+            )
+        )
+
+        self.assertTrue(
+            all(
+                len(preview_call.args[0]) == bytes_per_second * 8
+                for preview_call in model.preview.call_args_list
+            )
+        )
+        self.assertEqual(
+            [snapshot_call.args for snapshot_call in recorder.snapshot.call_args_list],
+            [
+                (0, bytes_per_second * 8),
+                (0, bytes_per_second * 8),
+                (bytes_per_second * 2, bytes_per_second * 8),
+                (bytes_per_second * 2, bytes_per_second * 8),
+            ],
+        )
+        self.assertEqual(updates[1].stable_end, 4.0)
+        self.assertEqual(updates[3].stable, "zero one two three")
+        self.assertEqual(updates[3].stable_end, 8.0)
+        stop.wait.assert_has_calls([call(2.0)] * 5)
 
     def test_preview_overlay_consumes_worker_updates(self) -> None:
         tkinter = Mock()
