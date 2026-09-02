@@ -40,12 +40,11 @@ def main() -> int:
     parser.add_argument("audio", type=Path, help="16 kHz mono WAV recording")
     parser.add_argument("--model", choices=LOCAL_ASR_MODELS, default="base")
     parser.add_argument("--language", default="auto")
-    parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--runs", type=int, default=3)
     args = parser.parse_args()
 
-    if args.warmup < 0 or args.runs < 1:
-        parser.error("--warmup must be non-negative and --runs must be positive")
+    if args.runs < 1:
+        parser.error("--runs must be positive")
     duration, pcm16 = read_audio(args.audio)
     settings = Settings(local_asr_model=args.model, language=args.language)
 
@@ -56,8 +55,6 @@ def main() -> int:
     preview_audio = pcm16[-PREVIEW_WINDOW_BYTES:]
     preview_timings = []
     final_timings = []
-    preview_text = ""
-    transcript = ""
     preview_final = None
     try:
         started = perf_counter()
@@ -66,8 +63,6 @@ def main() -> int:
         if preview is None:
             raise RuntimeError("Preview request was dropped")
         preview_text = preview.text
-        for _ in range(args.warmup):
-            model.preview(preview_audio, settings)
         for _ in range(args.runs):
             started = perf_counter()
             model.preview(preview_audio, settings)

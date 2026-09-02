@@ -80,7 +80,6 @@ class VoiceCommanderTests(unittest.TestCase):
         final_path = write_wav(silence + pcm16 * 2)
         settings = Settings(local_asr_model=model_name, language="en-US")
         engine = LocalAsrEngine(executable, server_executable, model_path)
-        process = None
         try:
             preview = engine.preview(pcm16, settings)
             self.assertIsNotNone(preview)
