@@ -209,6 +209,7 @@ class VoiceCommander:
         self._timer = threading.Timer(self.settings.max_seconds, self._recording_limit)
         self._timer.daemon = True
         self._timer.start()
+        self._preview_commit = None
         if (
             self.settings.live_preview
             and self._local_model is not None
@@ -218,7 +219,6 @@ class VoiceCommander:
             languages: queue.SimpleQueue[str] = queue.SimpleQueue()
             self._preview_stop = stop
             self._preview_language = languages
-            self._preview_commit = None
             self._preview_updates.put("Listening")
             threading.Thread(target=self._preview, args=(stop, languages), daemon=True).start()
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")

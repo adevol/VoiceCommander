@@ -943,6 +943,24 @@ class VoiceCommanderTests(unittest.TestCase):
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
     @patch("voicecommander.app.Recorder")
+    @patch("voicecommander.app._beep")
+    def test_recording_without_preview_clears_the_previous_commit(
+        self,
+        beep: Mock,
+        recorder_type: Mock,
+        executor_type: Mock,
+        timer: Mock,
+    ) -> None:
+        app = VoiceCommander(Settings(live_preview=False))
+        app._preview_commit = PreviewText("Old recording", "", 24.0)
+
+        app._start_recording()
+
+        self.assertIsNone(app._preview_commit)
+
+    @patch("voicecommander.app.threading.Timer")
+    @patch("voicecommander.app.ThreadPoolExecutor")
+    @patch("voicecommander.app.Recorder")
     def test_hotkey_is_ignored_during_processing(
         self, recorder_type: Mock, executor_type: Mock, timer: Mock
     ) -> None:
