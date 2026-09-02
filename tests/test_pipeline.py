@@ -300,6 +300,7 @@ class VoiceCommanderTests(unittest.TestCase):
         transcribe.assert_called_once_with(
             Path("cli.exe"), Path("model.bin"), path, Settings()
         )
+        start_server.assert_not_called()
 
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
     def test_whisper_engine_rejects_a_tail_with_no_new_words(

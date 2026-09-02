@@ -116,6 +116,8 @@ class LocalAsrEngine:
         if (
             preview is not None
             and preview.stable
+            and self._server is not None
+            and self._server.process.poll() is None
             and preview.stable_end - FINAL_OVERLAP_SECONDS
             >= MIN_SAVED_PREFIX_SECONDS
         ):
