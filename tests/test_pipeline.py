@@ -371,9 +371,12 @@ class VoiceCommanderTests(unittest.TestCase):
 
     @patch("voicecommander.local_asr._transcribe_whisper")
     def test_tail_programming_error_is_not_swallowed(self, transcribe: Mock) -> None:
+        server = Mock()
+        server.process.poll.return_value = None
         engine = LocalAsrEngine(
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
+        engine._server = server
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             with (

@@ -90,22 +90,20 @@ class LocalAsrEngine:
 
     def preview(self, pcm16: bytes, settings: Settings) -> PreviewResult | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
-        return self._decode_pcm(pcm16, settings, blocking=False)
-
-    def _decode_pcm(
-        self, pcm16: bytes, settings: Settings, *, blocking: bool
-    ) -> PreviewResult | None:
-        if not self._preview_lock.acquire(blocking=blocking):
+        if not self._preview_lock.acquire(blocking=False):
             return None
         try:
-            self._preview_cancel.clear()
-            if self._server is None or self._server.process.poll() is not None:
-                self._server = _start_whisper_server(
-                    self.server_executable, self.model, self._preview_cancel
-                )
-            return self._server.transcribe(pcm16, settings)
+            return self._decode_pcm(pcm16, settings)
         finally:
             self._preview_lock.release()
+
+    def _decode_pcm(self, pcm16: bytes, settings: Settings) -> PreviewResult:
+        self._preview_cancel.clear()
+        if self._server is None or self._server.process.poll() is not None:
+            self._server = _start_whisper_server(
+                self.server_executable, self.model, self._preview_cancel
+            )
+        return self._server.transcribe(pcm16, settings)
 
     def transcribe(
         self,
@@ -126,7 +124,8 @@ class LocalAsrEngine:
                 with wave.open(str(path), "rb") as source:
                     source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                     tail = source.readframes(source.getnframes())
-                result = self._decode_pcm(tail, settings, blocking=True)
+                with self._preview_lock:
+                    result = self._decode_pcm(tail, settings)
                 if result.segments:
                     joined = merge_overlapping_text(preview.stable, result.text, 3)
                     if joined is not None and joined != preview.stable:
