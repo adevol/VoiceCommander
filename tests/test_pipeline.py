@@ -72,8 +72,8 @@ class VoiceCommanderTests(unittest.TestCase):
             PreviewResult(
                 "Hello brave",
                 (
-                    PreviewSegment("Hello", 0.0, 1.0),
-                    PreviewSegment(" brave", 1.0, 3.5),
+                    PreviewSegment("Hello", 1.0),
+                    PreviewSegment(" brave", 3.5),
                 ),
                 4.0,
                 "de",
@@ -81,9 +81,9 @@ class VoiceCommanderTests(unittest.TestCase):
             PreviewResult(
                 "Hello brave world",
                 (
-                    PreviewSegment("Hello", 0.0, 1.0),
-                    PreviewSegment(" brave", 1.0, 3.0),
-                    PreviewSegment(" world", 3.0, 4.5),
+                    PreviewSegment("Hello", 1.0),
+                    PreviewSegment(" brave", 3.0),
+                    PreviewSegment(" world", 4.5),
                 ),
                 5.0,
             ),
@@ -138,8 +138,8 @@ class VoiceCommanderTests(unittest.TestCase):
             PreviewResult(
                 "Hello world",
                 (
-                    PreviewSegment("Hello", 0.0, 1.0),
-                    PreviewSegment(" world", 1.0, 2.5),
+                    PreviewSegment("Hello", 1.0),
+                    PreviewSegment(" world", 2.5),
                 ),
                 3.0,
                 "de",
@@ -163,7 +163,7 @@ class VoiceCommanderTests(unittest.TestCase):
             Path("model.bin"),
         )
         server = start_server.return_value
-        preview = PreviewResult("Hallo", (PreviewSegment("Hallo", 0.0, 1.0),), 1.0)
+        preview = PreviewResult("Hallo", (PreviewSegment("Hallo", 1.0),), 1.0)
         server.transcribe.return_value = preview
         settings = Settings(language="de-DE")
 
@@ -193,7 +193,7 @@ class VoiceCommanderTests(unittest.TestCase):
         server.process.poll.return_value = None
         server.transcribe.return_value = PreviewResult(
             "brave new bright world",
-            (PreviewSegment("brave new bright world", 0.2, 3.0),),
+            (PreviewSegment("brave new bright world", 3.0),),
             3.0,
         )
         engine = LocalAsrEngine(
@@ -239,32 +239,6 @@ class VoiceCommanderTests(unittest.TestCase):
         )
 
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
-    def test_whisper_engine_rejects_a_match_after_the_overlap(
-        self, transcribe: Mock
-    ) -> None:
-        server = Mock()
-        server.process.poll.return_value = None
-        server.transcribe.return_value = PreviewResult(
-            "and the actual tail",
-            (PreviewSegment("and the actual tail", 2.1, 4.0),),
-            4.0,
-        )
-        engine = LocalAsrEngine(
-            Path("cli.exe"), Path("server.exe"), Path("model.bin")
-        )
-        engine._server = server
-        path = write_wav(b"\0\0" * 16_000 * 26)
-        try:
-            text = engine.transcribe(
-                path, Settings(), PreviewText("Earlier words and the", "", 24.0)
-            )
-        finally:
-            path.unlink()
-
-        self.assertEqual(text, "full fallback")
-        transcribe.assert_called_once()
-
-    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
     def test_whisper_engine_rejects_a_tail_with_no_new_words(
         self, transcribe: Mock
     ) -> None:
@@ -272,7 +246,7 @@ class VoiceCommanderTests(unittest.TestCase):
         server.process.poll.return_value = None
         server.transcribe.return_value = PreviewResult(
             "Hello brave new",
-            (PreviewSegment("Hello brave new", 0.0, 2.0),),
+            (PreviewSegment("Hello brave new", 2.0),),
             2.0,
         )
         engine = LocalAsrEngine(
@@ -363,7 +337,7 @@ class VoiceCommanderTests(unittest.TestCase):
         entered = threading.Event()
         release = threading.Event()
 
-        preview = PreviewResult("first", (PreviewSegment("first", 0.0, 1.0),), 1.0)
+        preview = PreviewResult("first", (PreviewSegment("first", 1.0),), 1.0)
 
         def transcribe(data: bytes, settings: Settings) -> PreviewResult:
             entered.set()
@@ -594,7 +568,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         def finish(*_args) -> PreviewResult:
             stop.set()
-            return PreviewResult("Hello", (PreviewSegment("Hello", 0.0, 1.0),), 1.0)
+            return PreviewResult("Hello", (PreviewSegment("Hello", 1.0),), 1.0)
 
         model.preview.side_effect = finish
         with patch("voicecommander.captions.load_local_model", return_value=model) as load:

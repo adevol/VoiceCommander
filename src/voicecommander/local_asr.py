@@ -57,7 +57,6 @@ def merge_overlapping_text(
 @dataclass(frozen=True, slots=True)
 class PreviewSegment:
     text: str
-    start: float
     end: float
 
 
@@ -126,10 +125,7 @@ class LocalAsrEngine:
                     source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                     tail = source.readframes(source.getnframes())
                 result = self._decode_pcm(tail, settings, blocking=True)
-                if (
-                    result.segments
-                    and result.segments[0].start <= FINAL_OVERLAP_SECONDS
-                ):
+                if result.segments:
                     joined = merge_overlapping_text(preview.stable, result.text, 3)
                     if joined is not None and joined != preview.stable:
                         return joined
@@ -187,15 +183,10 @@ class _WhisperServer:
             if (
                 not isinstance(segment, dict)
                 or not isinstance(segment.get("text"), str)
-                or not isinstance(segment.get("start"), (int, float))
                 or not isinstance(segment.get("end"), (int, float))
             ):
                 raise RuntimeError("Whisper preview returned an invalid response")
-            segments.append(
-                PreviewSegment(
-                    segment["text"], float(segment["start"]), float(segment["end"])
-                )
-            )
+            segments.append(PreviewSegment(segment["text"], float(segment["end"])))
         probabilities = result.get("language_probabilities", {})
         language = None
         if isinstance(probabilities, dict):
