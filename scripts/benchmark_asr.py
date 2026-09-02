@@ -6,8 +6,16 @@ from pathlib import Path
 from statistics import median
 from time import perf_counter
 
-from voicecommander.local_asr import load_local_model
+from voicecommander.local_asr import (
+    MIN_REUSABLE_PREVIEW_SECONDS,
+    PreviewText,
+    load_local_model,
+)
+from voicecommander.preview import PREVIEW_WINDOW_BYTES
 from voicecommander.settings import LOCAL_ASR_MODELS, Settings
+
+BYTES_PER_SECOND = 16_000 * 2
+FINAL_TAIL_SECONDS = 4
 
 
 def read_audio(path: Path) -> tuple[float, bytes]:
@@ -34,7 +42,6 @@ def main() -> int:
     parser.add_argument("--language", default="auto")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--runs", type=int, default=3)
-    parser.add_argument("--preview", action="store_true", help="benchmark the warm preview server")
     args = parser.parse_args()
 
     if args.warmup < 0 or args.runs < 1:
@@ -46,43 +53,61 @@ def main() -> int:
     model = load_local_model(args.model)
     load_seconds = perf_counter() - started
 
-    def run_once() -> str:
-        result = (
-            model.preview(pcm16, settings)
-            if args.preview
-            else model.transcribe(args.audio, settings)
-        )
-        if result is None:
-            raise RuntimeError("Preview request was dropped")
-        return result.text if args.preview else result
-
-    first_preview = None
+    preview_audio = pcm16[-PREVIEW_WINDOW_BYTES:]
+    preview_timings = []
+    final_timings = []
+    preview_text = ""
     transcript = ""
+    preview_final = None
     try:
-        if args.preview:
-            started = perf_counter()
-            transcript = run_once()
-            first_preview = perf_counter() - started
+        started = perf_counter()
+        preview = model.preview(preview_audio, settings)
+        first_preview = perf_counter() - started
+        if preview is None:
+            raise RuntimeError("Preview request was dropped")
+        preview_text = preview.text
         for _ in range(args.warmup):
-            run_once()
-        timings = []
+            model.preview(preview_audio, settings)
         for _ in range(args.runs):
             started = perf_counter()
-            transcript = run_once()
-            timings.append(perf_counter() - started)
+            model.preview(preview_audio, settings)
+            preview_timings.append(perf_counter() - started)
+        for _ in range(args.runs):
+            started = perf_counter()
+            transcript = model.transcribe(args.audio, settings)
+            final_timings.append(perf_counter() - started)
+        if duration >= MIN_REUSABLE_PREVIEW_SECONDS + FINAL_TAIL_SECONDS:
+            prefix = model.preview(
+                pcm16[: -FINAL_TAIL_SECONDS * BYTES_PER_SECOND], settings
+            )
+            if (
+                prefix is not None
+                and prefix.segments
+                and prefix.segments[-1].end >= MIN_REUSABLE_PREVIEW_SECONDS
+            ):
+                started = perf_counter()
+                preview_final = model.transcribe(
+                    args.audio,
+                    settings,
+                    PreviewText(prefix.text, "", prefix.segments[-1].end),
+                )
+                preview_final = perf_counter() - started, preview_final == transcript
     finally:
         model.close()
 
-    middle = median(timings)
     print(f"model:      {args.model}")
-    print(f"mode:       {'preview' if args.preview else 'final'}")
     print(f"audio:      {duration:.2f} s")
     print(f"load:       {load_seconds:.3f} s")
-    if first_preview is not None:
-        print(f"first:      {first_preview:.3f} s")
-    print(f"runs:       {', '.join(f'{value:.3f} s' for value in timings)}")
-    print(f"median:     {middle:.3f} s")
-    print(f"speed:      {duration / middle:.1f}x realtime")
+    print(f"preview:    {first_preview:.3f} s first, {median(preview_timings):.3f} s warm")
+    print(f"full final: {median(final_timings):.3f} s")
+    if preview_final is not None:
+        print(
+            f"warm final: {preview_final[0]:.3f} s, "
+            f"{'same' if preview_final[1] else 'different'} text"
+        )
+    else:
+        print("warm final: skipped; recording needs a 22 s committed prefix")
+    print(f"preview text: {preview_text}")
     print(f"transcript: {transcript}")
     return 0
 
