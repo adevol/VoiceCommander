@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import queue
 import tempfile
 import threading
 import unittest
+import wave
 from functools import partial
 from io import BytesIO
 from pathlib import Path
@@ -25,6 +27,7 @@ from voicecommander.local_asr import (
     PreviewResult,
     PreviewSegment,
     PreviewText,
+    WHISPER_DIR,
     WHISPER_RUNTIME_SHA256,
     _WhisperServer,
     _ensure_whisper,
@@ -57,6 +60,48 @@ def run_first_tk_poll(root: Mock) -> None:
 
 
 class VoiceCommanderTests(unittest.TestCase):
+    @unittest.skipUnless(
+        os.environ.get("VOICECOMMANDER_INTEGRATION_AUDIO"),
+        "set VOICECOMMANDER_INTEGRATION_AUDIO to run the real Whisper probe",
+    )
+    def test_real_whisper_server_reuses_preview_for_finalization(self) -> None:
+        audio = Path(os.environ["VOICECOMMANDER_INTEGRATION_AUDIO"])
+        model_name = os.environ.get("VOICECOMMANDER_INTEGRATION_MODEL", "base")
+        executable = WHISPER_DIR / "whisper-cli.exe"
+        server_executable = WHISPER_DIR / "whisper-server.exe"
+        model_path = WHISPER_DIR / WHISPER_MODELS[model_name][0]
+        if not all(path.exists() for path in (audio, executable, server_executable, model_path)):
+            self.skipTest("integration audio or installed Whisper files are missing")
+        with wave.open(str(audio), "rb") as source:
+            seconds = source.getnframes() / source.getframerate()
+            pcm16 = source.readframes(source.getnframes())
+        prefix_seconds = 22
+        silence = b"\0" * 16_000 * 2 * prefix_seconds
+        final_path = write_wav(silence + pcm16 * 2)
+        settings = Settings(local_asr_model=model_name, language="en-US")
+        engine = LocalAsrEngine(executable, server_executable, model_path)
+        process = None
+        try:
+            preview = engine.preview(pcm16, settings)
+            self.assertIsNotNone(preview)
+            self.assertTrue(preview.segments)
+            process = engine._server.process
+            with patch(
+                "voicecommander.local_asr._transcribe_whisper",
+                side_effect=AssertionError("warm tail finalization fell back"),
+            ):
+                final = engine.transcribe(
+                    final_path,
+                    settings,
+                    PreviewText(preview.text, "", prefix_seconds + seconds),
+                )
+            self.assertIs(engine._server.process, process)
+            self.assertGreater(len(final.split()), len(preview.text.split()))
+        finally:
+            engine.close()
+            final_path.unlink()
+        self.assertIsNotNone(process.poll())
+
     def test_recorder_snapshot_does_not_consume_final_audio(self) -> None:
         recorder = Recorder()
         recorder._chunks.extend(b"firstsecond")
