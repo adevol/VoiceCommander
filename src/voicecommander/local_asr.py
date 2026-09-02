@@ -31,7 +31,7 @@ WHISPER_RUNTIME_URL = (
 WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539"
 logger = logging.getLogger(__name__)
 FINAL_OVERLAP_SECONDS = 2.0
-MIN_SAVED_PREFIX_SECONDS = 20.0
+MIN_REUSABLE_PREVIEW_SECONDS = 22.0
 TAIL_PROMPT_WORDS = 50
 
 
@@ -114,35 +114,44 @@ class LocalAsrEngine:
         settings: Settings,
         preview: PreviewText | None = None,
     ) -> str:
+        joined = self._finalize_tail(path, settings, preview)
+        return joined or _transcribe_whisper(self.executable, self.model, path, settings)
+
+    def _finalize_tail(
+        self,
+        path: Path,
+        settings: Settings,
+        preview: PreviewText | None,
+    ) -> str | None:
         if (
-            preview is not None
-            and preview.stable
-            and self._server is not None
-            and self._server.process.poll() is None
-            and preview.stable_end - FINAL_OVERLAP_SECONDS
-            >= MIN_SAVED_PREFIX_SECONDS
+            preview is None
+            or not preview.stable
+            or preview.stable_end < MIN_REUSABLE_PREVIEW_SECONDS
+            or self._server is None
+            or self._server.process.poll() is not None
         ):
-            try:
-                tail_start = preview.stable_end - FINAL_OVERLAP_SECONDS
-                with wave.open(str(path), "rb") as source:
-                    source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
-                    tail = source.readframes(source.getnframes())
-                with self._preview_lock:
-                    result = self._decode_pcm(
-                        tail,
-                        settings,
-                        " ".join(preview.stable.split()[-TAIL_PROMPT_WORDS:]),
-                    )
-                if result.segments:
-                    joined = merge_overlapping_text(preview.stable, result.text, 3)
-                    if joined is not None and joined != preview.stable:
-                        return joined
-            except (OSError, EOFError, RuntimeError, wave.Error):
-                logger.warning(
-                    "Could not finalize from the committed preview; decoding the full file",
-                    exc_info=True,
+            return None
+        try:
+            tail_start = preview.stable_end - FINAL_OVERLAP_SECONDS
+            with wave.open(str(path), "rb") as source:
+                source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
+                tail = source.readframes(source.getnframes())
+            with self._preview_lock:
+                result = self._decode_pcm(
+                    tail,
+                    settings,
+                    " ".join(preview.stable.split()[-TAIL_PROMPT_WORDS:]),
                 )
-        return _transcribe_whisper(self.executable, self.model, path, settings)
+        except (OSError, EOFError, RuntimeError, wave.Error):
+            logger.warning(
+                "Could not finalize from the committed preview; decoding the full file",
+                exc_info=True,
+            )
+            return None
+        if not result.segments:
+            return None
+        joined = merge_overlapping_text(preview.stable, result.text, 3)
+        return joined if joined != preview.stable else None
 
     def cancel_preview(self) -> None:
         self._preview_cancel.set()
