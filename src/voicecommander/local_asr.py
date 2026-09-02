@@ -147,18 +147,15 @@ class LocalAsrEngine:
                 exc_info=True,
             )
             return None
-        if not result.segments:
-            return None
         joined = merge_overlapping_text(preview.stable, result.text, 3)
-        return joined if joined != preview.stable else None
+        return joined if joined and joined != preview.stable else None
 
     def close(self) -> None:
         self._preview_cancel.set()
         if self._server is not None:
             self._server.close()
         with self._preview_lock:
-            if self._server is not None:
-                self._server = None
+            self._server = None
 
 
 @dataclass(frozen=True, slots=True)

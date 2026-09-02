@@ -20,6 +20,9 @@ PREVIEW_INTERVAL = 2.0
 PREVIEW_WINDOW_SECONDS = 8.0
 CORRECTION_HORIZON = 2.0
 PREVIEW_MODELS = {"tiny", "base"}
+PREVIEW_WINDOW_BYTES = round(
+    PREVIEW_WINDOW_SECONDS * SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH
+)
 
 
 def transcribe_live(
@@ -39,10 +42,8 @@ def transcribe_live(
         if window_start != previous_start:
             previous = None
             previous_start = window_start
-        bytes_per_second = SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH
         first_byte = round(window_start * SAMPLE_RATE) * CHANNELS * SAMPLE_WIDTH
-        window_bytes = round(PREVIEW_WINDOW_SECONDS * bytes_per_second)
-        pcm16 = recorder.snapshot(first_byte, window_bytes)
+        pcm16 = recorder.snapshot(first_byte, PREVIEW_WINDOW_BYTES)
         if not pcm16:
             continue
         if stop.is_set():
