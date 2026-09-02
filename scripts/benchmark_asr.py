@@ -11,7 +11,7 @@ from voicecommander.local_asr import (
     PreviewText,
     load_local_model,
 )
-from voicecommander.preview import PREVIEW_WINDOW_BYTES
+from voicecommander.preview import PREVIEW_WINDOW_BYTES, PREVIEW_WINDOW_SECONDS
 from voicecommander.settings import LOCAL_ASR_MODELS, Settings
 
 BYTES_PER_SECOND = 16_000 * 2
@@ -46,11 +46,14 @@ def main() -> int:
     if args.runs < 1:
         parser.error("--runs must be positive")
     duration, pcm16 = read_audio(args.audio)
+    if len(pcm16) < PREVIEW_WINDOW_BYTES:
+        parser.error(
+            f"audio must be at least {PREVIEW_WINDOW_SECONDS:g} seconds "
+            "to benchmark the production preview window"
+        )
     settings = Settings(local_asr_model=args.model, language=args.language)
 
-    started = perf_counter()
     model = load_local_model(args.model)
-    load_seconds = perf_counter() - started
 
     preview_audio = pcm16[-PREVIEW_WINDOW_BYTES:]
     preview_timings = []
@@ -92,9 +95,16 @@ def main() -> int:
 
     print(f"model:      {args.model}")
     print(f"audio:      {duration:.2f} s")
-    print(f"load:       {load_seconds:.3f} s")
-    print(f"preview:    {first_preview:.3f} s first, {median(preview_timings):.3f} s warm")
-    print(f"full final: {median(final_timings):.3f} s")
+    warm_preview = median(preview_timings)
+    full_final = median(final_timings)
+    print(
+        f"preview:    {first_preview:.3f} s cold, {warm_preview:.3f} s warm "
+        f"for {PREVIEW_WINDOW_SECONDS:g} s ({PREVIEW_WINDOW_SECONDS / warm_preview:.2f}x realtime)"
+    )
+    print(
+        f"full final: {full_final:.3f} s "
+        f"({duration / full_final:.2f}x realtime)"
+    )
     if preview_final is not None:
         print(
             f"warm final: {preview_final[0]:.3f} s, "
