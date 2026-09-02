@@ -87,11 +87,11 @@ flowchart LR
     G --> F
 ```
 
-The solid route is local and is the default. Cloud transcription is an explicit
-alternative that sends the WAV file to OpenRouter. Editing and Markdown send
-only the final transcript. Local `tiny` and `base` show tentative text while
-recording. You can disable Live local preview in settings. `small` remains
-final-only because it missed the preview latency gate.
+The solid route is local and is the default. Cloud transcription sends the WAV
+file to the audio-capable OpenRouter model ID entered in settings. Editing and
+Markdown send only the final transcript. Local `tiny` and `base` show tentative
+text while recording. You can disable Live local preview in settings. `small`
+remains final-only because it missed the preview latency gate.
 
 Every cloud request sets
 [`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),
