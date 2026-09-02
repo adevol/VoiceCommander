@@ -8,10 +8,10 @@ import logging
 import os
 import shutil
 import socket
-import string
 import subprocess
 import tempfile
 import time
+import unicodedata
 import wave
 import zipfile
 from dataclasses import dataclass, field
@@ -32,6 +32,26 @@ WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab609259
 logger = logging.getLogger(__name__)
 FINAL_OVERLAP_SECONDS = 2.0
 MIN_SAVED_PREFIX_SECONDS = 20.0
+
+
+def merge_overlapping_text(
+    previous: str, current: str, minimum_words: int = 1
+) -> str | None:
+    """Join transcripts when one's word suffix repeats the other's prefix."""
+    old_words = previous.split()
+    new_words = current.split()
+    old_keys = [
+        "".join(char for char in word.casefold() if unicodedata.category(char)[0] != "P")
+        for word in old_words
+    ]
+    new_keys = [
+        "".join(char for char in word.casefold() if unicodedata.category(char)[0] != "P")
+        for word in new_words
+    ]
+    for count in range(min(len(old_words), len(new_words)), minimum_words - 1, -1):
+        if old_keys[-count:] == new_keys[:count]:
+            return " ".join(old_words + new_words[count:])
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,17 +130,9 @@ class LocalAsrEngine:
                     result.segments
                     and result.segments[0].start <= FINAL_OVERLAP_SECONDS
                 ):
-                    before = preview.stable.split()
-                    after = result.text.split()
-                    before_keys = [
-                        word.strip(string.punctuation).casefold() for word in before
-                    ]
-                    after_keys = [
-                        word.strip(string.punctuation).casefold() for word in after
-                    ]
-                    for count in range(min(len(before), len(after)), 2, -1):
-                        if before_keys[-count:] == after_keys[:count]:
-                            return " ".join(before + after[count:])
+                    joined = merge_overlapping_text(preview.stable, result.text, 3)
+                    if joined is not None and joined != preview.stable:
+                        return joined
             except (OSError, EOFError, RuntimeError, wave.Error):
                 logger.warning(
                     "Could not finalize from the committed preview; decoding the full file",

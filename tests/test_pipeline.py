@@ -264,6 +264,32 @@ class VoiceCommanderTests(unittest.TestCase):
         self.assertEqual(text, "full fallback")
         transcribe.assert_called_once()
 
+    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
+    def test_whisper_engine_rejects_a_tail_with_no_new_words(
+        self, transcribe: Mock
+    ) -> None:
+        server = Mock()
+        server.process.poll.return_value = None
+        server.transcribe.return_value = PreviewResult(
+            "Hello brave new",
+            (PreviewSegment("Hello brave new", 0.0, 2.0),),
+            2.0,
+        )
+        engine = LocalAsrEngine(
+            Path("cli.exe"), Path("server.exe"), Path("model.bin")
+        )
+        engine._server = server
+        path = write_wav(b"\0\0" * 16_000 * 26)
+        try:
+            text = engine.transcribe(
+                path, Settings(), PreviewText("Hello brave new", "", 24.0)
+            )
+        finally:
+            path.unlink()
+
+        self.assertEqual(text, "full fallback")
+        transcribe.assert_called_once()
+
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full transcript")
     def test_short_preview_uses_the_full_decode(self, transcribe: Mock) -> None:
         server = Mock()
@@ -544,6 +570,7 @@ class VoiceCommanderTests(unittest.TestCase):
             ("", "Hello world", "Hello world"),
             ("Hello world", "hello world", "Hello world"),
             ("Hello, world!", "WORLD again", "Hello, world! again"),
+            ("你好， 世界！", "世界？ again", "你好， 世界！ again"),
             ("one two three", "two three four", "one two three four"),
             ("hello", "there", "hello there"),
         )

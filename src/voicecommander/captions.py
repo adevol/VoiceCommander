@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import logging
 import queue
-import string
 import threading
 from collections import deque
 from contextlib import suppress
 
 from .audio import SAMPLE_RATE
-from .local_asr import load_local_model
+from .local_asr import load_local_model, merge_overlapping_text
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -31,16 +30,8 @@ CAPTION_WORD_LIMIT = 200
 
 def _merge_caption_text(previous: str, current: str) -> str:
     """Append only words not repeated by the overlapping audio window."""
-    old_words = previous.split()
-    new_words = current.split()
-    old_keys = [word.strip(string.punctuation).casefold() for word in old_words]
-    new_keys = [word.strip(string.punctuation).casefold() for word in new_words]
-    overlap = 0
-    for count in range(min(len(old_keys), len(new_keys)), 0, -1):
-        if old_keys[-count:] == new_keys[:count]:
-            overlap = count
-            break
-    return " ".join((old_words + new_words[overlap:])[-CAPTION_WORD_LIMIT:])
+    merged = merge_overlapping_text(previous, current)
+    return " ".join((merged or f"{previous} {current}").split()[-CAPTION_WORD_LIMIT:])
 
 
 def _put_latest(items: queue.Queue, item: object) -> None:
