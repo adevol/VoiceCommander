@@ -4,8 +4,6 @@ Attributes:
     WHISPER_MODELS: Quantised multilingual whisper.cpp builds, largest last, each
         paired with the Hugging Face LFS oid at `WHISPER_REVISION` that
         `local_asr._download` enforces.
-    OPENROUTER_ASR_MODELS: Chat models that accept audio input, OpenRouter having no
-        transcription endpoint.
     VOCABULARY_LIMIT: Characters accepted in the custom vocabulary.
 """
 
@@ -47,13 +45,6 @@ LANGUAGES = {
     "Russian": "ru-RU",
     "Spanish": "es-ES",
 }
-OPENROUTER_ASR_MODELS = (
-    "google/gemini-2.5-flash",
-    "google/gemini-2.5-flash-lite",
-    "google/gemini-3.5-flash-lite",
-    "openai/gpt-audio-mini",
-    "xiaomi/mimo-v2.5",
-)
 VOCABULARY_LIMIT = 500
 POSTPROCESS_STYLES = {
     "faithful": "Keep the speaker's wording and sentence order wherever possible.",
@@ -113,8 +104,8 @@ def validate(settings: Settings) -> None:
         raise ValueError("Invalid local ASR model")
     if settings.caption_asr_model not in LOCAL_ASR_MODELS:
         raise ValueError("Invalid caption ASR model")
-    if settings.openrouter_asr_model not in OPENROUTER_ASR_MODELS:
-        raise ValueError("Invalid OpenRouter transcription model")
+    if not settings.openrouter_asr_model.strip():
+        raise ValueError("OpenRouter transcription model is required")
     if settings.postprocess_strength > 0 and not settings.postprocess_model.strip():
         raise ValueError("Post-processing model is required")
     if settings.postprocess_style not in POSTPROCESS_STYLES:
@@ -209,7 +200,7 @@ def show_settings(settings: Settings, parent: object | None = None) -> Settings 
         ("ASR provider", "asr_provider", ASR_PROVIDERS),
         ("Local transcription model", "local_asr_model", LOCAL_ASR_MODELS),
         ("Caption model", "caption_asr_model", LOCAL_ASR_MODELS),
-        ("OpenRouter transcription model", "openrouter_asr_model", OPENROUTER_ASR_MODELS),
+        ("OpenRouter transcription model", "openrouter_asr_model", None),
         ("Post-processing model", "postprocess_model", None),
         ("Post-processing style", "postprocess_style", tuple(POSTPROCESS_STYLES)),
     ]
@@ -224,7 +215,6 @@ def show_settings(settings: Settings, parent: object | None = None) -> Settings 
             "asr_provider",
             "local_asr_model",
             "caption_asr_model",
-            "openrouter_asr_model",
             "postprocess_style",
         }:
             widget.configure(state="readonly")

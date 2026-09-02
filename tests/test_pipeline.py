@@ -587,8 +587,9 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_settings_reject_unsupported_asr_options(self) -> None:
         with self.assertRaisesRegex(ValueError, "Invalid language"):
             validate(Settings(language="zh-CN"))
-        with self.assertRaisesRegex(ValueError, "Invalid OpenRouter transcription model"):
-            validate(Settings(openrouter_asr_model="custom/transcriber"))
+        validate(Settings(openrouter_asr_model="custom/transcriber"))
+        with self.assertRaisesRegex(ValueError, "OpenRouter transcription model is required"):
+            validate(Settings(openrouter_asr_model="  "))
         validate(Settings(local_asr_model="tiny"))
         for name in (
             "parakeet-tdt-v3",
