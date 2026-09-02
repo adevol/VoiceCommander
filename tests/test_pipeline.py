@@ -252,11 +252,13 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_whisper_engine_appends_a_matching_preview_tail(
         self, transcribe: Mock, start_server: Mock
     ) -> None:
+        prefix_words = [f"word{number}" for number in range(60)]
+        prefix = " ".join(prefix_words)
         server = Mock()
         server.process.poll.return_value = None
         server.transcribe.return_value = PreviewResult(
-            "brave new bright world",
-            (PreviewSegment("brave new bright world", 3.0),),
+            "word57 word58 word59 ending",
+            (PreviewSegment("word57 word58 word59 ending", 3.0),),
             3.0,
         )
         engine = LocalAsrEngine(
@@ -266,16 +268,19 @@ class VoiceCommanderTests(unittest.TestCase):
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             text = engine.transcribe(
-                path, Settings(), PreviewText("Hello brave new bright", "", 24.0)
+                path, Settings(), PreviewText(prefix, "", 24.0)
             )
         finally:
             path.unlink()
 
-        self.assertEqual(text, "Hello brave new bright world")
+        self.assertEqual(text, f"{prefix} ending")
         transcribe.assert_not_called()
         start_server.assert_not_called()
         tail = server.transcribe.call_args.args[0]
         self.assertEqual(len(tail), 16_000 * 2 * 4)
+        self.assertEqual(
+            server.transcribe.call_args.args[2], " ".join(prefix_words[-50:])
+        )
 
     @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
@@ -406,7 +411,7 @@ class VoiceCommanderTests(unittest.TestCase):
 
         preview = PreviewResult("first", (PreviewSegment("first", 1.0),), 1.0)
 
-        def transcribe(data: bytes, settings: Settings) -> PreviewResult:
+        def transcribe(data: bytes, settings: Settings, prompt: str) -> PreviewResult:
             entered.set()
             release.wait(1)
             return preview

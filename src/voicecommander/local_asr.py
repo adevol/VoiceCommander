@@ -32,6 +32,7 @@ WHISPER_RUNTIME_SHA256 = "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab609259
 logger = logging.getLogger(__name__)
 FINAL_OVERLAP_SECONDS = 2.0
 MIN_SAVED_PREFIX_SECONDS = 20.0
+TAIL_PROMPT_WORDS = 50
 
 
 def merge_overlapping_text(
@@ -97,13 +98,15 @@ class LocalAsrEngine:
         finally:
             self._preview_lock.release()
 
-    def _decode_pcm(self, pcm16: bytes, settings: Settings) -> PreviewResult:
+    def _decode_pcm(
+        self, pcm16: bytes, settings: Settings, prompt: str = ""
+    ) -> PreviewResult:
         self._preview_cancel.clear()
         if self._server is None or self._server.process.poll() is not None:
             self._server = _start_whisper_server(
                 self.server_executable, self.model, self._preview_cancel
             )
-        return self._server.transcribe(pcm16, settings)
+        return self._server.transcribe(pcm16, settings, prompt)
 
     def transcribe(
         self,
@@ -125,7 +128,11 @@ class LocalAsrEngine:
                     source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                     tail = source.readframes(source.getnframes())
                 with self._preview_lock:
-                    result = self._decode_pcm(tail, settings)
+                    result = self._decode_pcm(
+                        tail,
+                        settings,
+                        " ".join(preview.stable.split()[-TAIL_PROMPT_WORDS:]),
+                    )
                 if result.segments:
                     joined = merge_overlapping_text(preview.stable, result.text, 3)
                     if joined is not None and joined != preview.stable:
@@ -154,8 +161,10 @@ class _WhisperServer:
     process: subprocess.Popen
     url: str
 
-    def transcribe(self, pcm16: bytes, settings: Settings) -> PreviewResult:
-        boundary, body = _preview_request(pcm16, settings)
+    def transcribe(
+        self, pcm16: bytes, settings: Settings, prompt: str = ""
+    ) -> PreviewResult:
+        boundary, body = _preview_request(pcm16, settings, prompt)
         request = Request(
             self.url + "/inference",
             data=body,
@@ -286,7 +295,9 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
     return executable, WHISPER_DIR / "whisper-server.exe", model
 
 
-def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
+def _preview_request(
+    pcm16: bytes, settings: Settings, prompt: str = ""
+) -> tuple[str, bytes]:
     wav = BytesIO()
     with wave.open(wav, "wb") as output:
         output.setnchannels(CHANNELS)
@@ -301,8 +312,9 @@ def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
         "temperature": "0",
         "token_timestamps": "false",
     }
-    if settings.vocabulary:
-        fields |= {"prompt": settings.vocabulary, "carry_initial_prompt": "true"}
+    initial_prompt = " ".join(filter(None, (settings.vocabulary, prompt)))
+    if initial_prompt:
+        fields |= {"prompt": initial_prompt, "carry_initial_prompt": "true"}
     body = bytearray()
     for name, value in fields.items():
         body.extend(
