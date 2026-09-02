@@ -63,12 +63,13 @@ flowchart TD
 
 Each recording becomes a temporary WAV file. With a local `tiny` or `base`
 preview, VoiceCommander confirms older segments that agree across consecutive
-passes. When that prefix lets a long recording skip at least 20 seconds,
-VoiceCommander keeps the preview server warm and transcribes the remaining
-audio with two seconds of overlap. It appends the tail only when at least three
-words match and the match starts inside that overlap. Short recordings and
-unsafe joins use the existing full-file Whisper transcription. Tentative
-preview text is never committed.
+passes. Every two seconds it decodes an eight-second window that begins two
+seconds before the last confirmed point. When that prefix lets a long recording
+skip at least 20 seconds, VoiceCommander reuses the warm preview server and
+transcribes the remaining audio with the same two-second overlap. It appends the
+tail only when at least three words match and the tail adds new words. Short
+recordings, cold servers, and unsafe joins use the existing full-file Whisper
+transcription. Tentative preview text is never committed.
 
 ```mermaid
 flowchart LR
