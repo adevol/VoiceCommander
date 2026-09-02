@@ -153,13 +153,10 @@ class LocalAsrEngine:
         joined = merge_overlapping_text(preview.stable, result.text, 3)
         return joined if joined != preview.stable else None
 
-    def cancel_preview(self) -> None:
+    def close(self) -> None:
         self._preview_cancel.set()
         if self._server is not None:
             self._server.close()
-
-    def close(self) -> None:
-        self.cancel_preview()
         with self._preview_lock:
             if self._server is not None:
                 self._server = None

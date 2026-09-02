@@ -432,12 +432,12 @@ class VoiceCommanderTests(unittest.TestCase):
         self.assertEqual(results, [preview])
         engine.close()
 
-    def test_cancel_preview_stops_the_warm_server(self) -> None:
+    def test_close_stops_the_warm_server(self) -> None:
         server = Mock()
         model = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
         model._server = server
 
-        model.cancel_preview()
+        model.close()
 
         self.assertTrue(model._preview_cancel.is_set())
         server.close.assert_called_once_with()
@@ -998,7 +998,6 @@ class VoiceCommanderTests(unittest.TestCase):
 
         self.assertTrue(first_stop.is_set())
         self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
-        model_future.result.return_value.cancel_preview.assert_not_called()
         finish_args = executor_type.return_value.submit.call_args.args
         self.assertEqual(finish_args[-2].language, "de")
         self.assertEqual(finish_args[-1], committed)
