@@ -1026,7 +1026,7 @@ class VoiceCommanderTests(unittest.TestCase):
         model_future.done.return_value = True
         model_future.cancelled.return_value = False
         model_future.exception.return_value = None
-        app = VoiceCommander(Settings())
+        app = VoiceCommander(Settings(local_asr_model="small"))
 
         app.on_hotkey()
 
