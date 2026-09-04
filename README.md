@@ -109,15 +109,15 @@ runtime are pinned and verified.
 
 | Model | Download | Final | Warm preview | Trade-off |
 | --- | ---: | ---: | ---: | --- |
-| `tiny` | 31 MiB | 0.68 s | 0.79 s | Fastest live text; lower accuracy |
-| `base` | 57 MiB | 1.24 s | 1.51 s | Default; live preview enabled |
-| `small` | 181 MiB | 4.06 s | Disabled (5.63 s) | Better recognition; final-only |
+| `tiny` | 31 MiB | 0.56 s | 0.50 s | Fastest live text; lower accuracy |
+| `base` | 57 MiB | 0.94 s | 1.00 s | Default; balanced speed and accuracy |
+| `small` | 181 MiB | 2.72 s | 3.63 s | Better recognition; slower live text |
 
-Latency is the end-to-end median of five runs after one warm-up on
-[FluidVoice's 1.16-second speech fixture](https://github.com/altic-dev/FluidVoice/blob/6f0684e694828b44fc643b7373f2a22d1e24eafa/Tests/FluidDictationIntegrationTests/Resources/dictation_fixture.wav)
-and an 8-thread Ryzen laptop. Final timings include the CLI startup paid by each
-dictation. Preview timings use the persistent local server after its first
-request. Lower is better.
+Latency is the median of five English runs on the
+[bundled 11-second JFK sample](benchmarks/jfk.wav), using whisper.cpp v1.9.1
+capped at 8 threads on a Ryzen laptop in Balanced power mode. Final timings
+include CLI startup. Preview timings decode the production 8-second window on
+the persistent local server after its first request. Lower is better.
 
 These short English timings settle the latency gate only. Long recordings and
 German, French, and Spanish still need manual release checks.
