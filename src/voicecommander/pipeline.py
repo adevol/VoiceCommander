@@ -16,19 +16,19 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1"
 logger = logging.getLogger(__name__)
 
 
-def _openrouter_request(path: str, api_key: str, payload: dict[str, Any]) -> Request:
+def _openrouter_request(api_key: str, payload: dict[str, Any]) -> Request:
     if not api_key:
         raise RuntimeError("OpenRouter is selected but no API key is configured")
     return Request(
-        f"{OPENROUTER_URL}{path}",
+        f"{OPENROUTER_URL}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
 
 
-def _openrouter(path: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    request = _openrouter_request(path, api_key, payload)
+def _openrouter(api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    request = _openrouter_request(api_key, payload)
     last: OSError | None = None
     for _ in range(2):
         try:
@@ -94,7 +94,7 @@ def transcribe_openrouter(path: Path, settings: Settings, api_key: str) -> str:
         "temperature": 0,
         "provider": {"data_collection": "deny"},
     }
-    return _message_text(_openrouter("/chat/completions", api_key, payload), "transcript")
+    return _message_text(_openrouter(api_key, payload), "transcript")
 
 
 def postprocess_openrouter(
@@ -104,7 +104,7 @@ def postprocess_openrouter(
     markdown: bool = False,
 ) -> str:
     return _message_text(
-        _openrouter("/chat/completions", api_key, _postprocess_payload(text, settings, markdown)),
+        _openrouter(api_key, _postprocess_payload(text, settings, markdown)),
         "post-processed text",
     )
 
@@ -129,7 +129,7 @@ def postprocess_openrouter_stream(
     markdown: bool = False,
 ) -> str:
     payload = _postprocess_payload(text, settings, markdown) | {"stream": True}
-    request = _openrouter_request("/chat/completions", api_key, payload)
+    request = _openrouter_request(api_key, payload)
     result = ""
     emitted = ""
     last_update = monotonic()

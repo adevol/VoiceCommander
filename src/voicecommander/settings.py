@@ -21,6 +21,8 @@ KEYRING_SERVICE = "VoiceCommander"
 KEYRING_USER = "OpenRouter"
 ASR_PROVIDERS = ("local", "openrouter")
 WHISPER_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
+
+
 @dataclass(frozen=True, slots=True)
 class WhisperModel:
     filename: str
@@ -140,15 +142,14 @@ def load_settings(path: Path = CONFIG_PATH) -> Settings:
         return Settings()
     with path.open("rb") as file:
         data = tomllib.load(file)
-    defaults = Settings()
     unknown = data.keys() - {field.name for field in fields(Settings)}
     if unknown:
         raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
-    values = {field.name: data.get(field.name, getattr(defaults, field.name)) for field in fields(Settings)}
-    values["local_asr_model"] = LOCAL_MODEL_MIGRATIONS.get(
-        values["local_asr_model"], values["local_asr_model"]
-    )
-    settings = Settings(**values)
+    if "local_asr_model" in data:
+        data["local_asr_model"] = LOCAL_MODEL_MIGRATIONS.get(
+            data["local_asr_model"], data["local_asr_model"]
+        )
+    settings = Settings(**data)
     validate(settings)
     return settings
 

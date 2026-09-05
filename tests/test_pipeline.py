@@ -574,7 +574,7 @@ class VoiceCommanderTests(unittest.TestCase):
                 "without it the prompt biases only the first 30 s of a recording",
             )
             for call in openrouter.call_args_list:
-                self.assertIn("Kubernetes, VoiceCommander", str(call.args[2]["messages"]))
+                self.assertIn("Kubernetes, VoiceCommander", str(call.args[1]["messages"]))
 
             transcript.write_text("Kubernetes", encoding="utf-8")
             model(path, Settings())
@@ -795,7 +795,7 @@ class VoiceCommanderTests(unittest.TestCase):
         )
 
         self.assertEqual(postprocess_openrouter("Raw", settings, "secret"), "Edited")
-        prompt = openrouter.call_args.args[2]["messages"][0]["content"]
+        prompt = openrouter.call_args.args[1]["messages"][0]["content"]
         self.assertIn("keeping the speaker's wording and sentence order", prompt)
         self.assertIn("professional prose", prompt)
         self.assertIn("scratch that", prompt)
@@ -809,7 +809,7 @@ class VoiceCommanderTests(unittest.TestCase):
         result = postprocess_openrouter("Describe a heading", Settings(), "secret", markdown=True)
 
         self.assertEqual(result, "## Result")
-        prompt = openrouter.call_args.args[2]["messages"][0]["content"]
+        prompt = openrouter.call_args.args[1]["messages"][0]["content"]
         self.assertIn("finished Markdown", prompt)
         self.assertIn("$...$", prompt)
         self.assertIn("$$...$$", prompt)
@@ -888,12 +888,7 @@ class VoiceCommanderTests(unittest.TestCase):
             )
 
         self.assertEqual(result, "Transcript")
-        self.assertEqual(
-            openrouter.call_args.args[0],
-            "/chat/completions",
-            "OpenRouter has no /audio/transcriptions route",
-        )
-        payload = openrouter.call_args.args[2]
+        payload = openrouter.call_args.args[1]
         self.assertEqual(payload["model"], "google/gemini-2.5-flash")
         self.assertEqual(payload["provider"], {"data_collection": "deny"})
         parts = payload["messages"][0]["content"]
@@ -911,7 +906,7 @@ class VoiceCommanderTests(unittest.TestCase):
             result = transcribe_openrouter(path, Settings(), "secret")
 
         self.assertEqual(result, "Bonjour")
-        instruction = openrouter.call_args.args[2]["messages"][0]["content"][0]["text"]
+        instruction = openrouter.call_args.args[1]["messages"][0]["content"][0]["text"]
         self.assertIn("Detect the spoken language", instruction)
         self.assertNotIn("auto", instruction.casefold())
 
@@ -922,8 +917,12 @@ class VoiceCommanderTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "OpenRouter could not be reached"),
             self.assertLogs("voicecommander.pipeline", level="WARNING"),
         ):
-            _openrouter("/chat/completions", "secret", {})
+            _openrouter("secret", {})
         self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(
+            urlopen.call_args.args[0].full_url,
+            "https://openrouter.ai/api/v1/chat/completions",
+        )
 
     def test_zero_editing_strength_keeps_raw_transcript(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=0)
@@ -1146,7 +1145,7 @@ class VoiceCommanderTests(unittest.TestCase):
             "https://openrouter.ai", 400, "Bad Request", {}, BytesIO(b"invalid model")
         )
         with self.assertRaisesRegex(RuntimeError, "HTTP 400: invalid model"):
-            _openrouter("/test", "secret", {})
+            _openrouter("secret", {})
 
 
 if __name__ == "__main__":
