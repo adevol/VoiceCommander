@@ -9,7 +9,6 @@ import threading
 import time
 import winsound
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import replace
 from enum import Enum
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -18,7 +17,8 @@ from typing import Callable
 from .audio import Recorder
 from .local_asr import LocalAsrEngine, PreviewText, load_local_model
 from .pipeline import run_pipeline
-from .preview import PREVIEW_MODELS, PreviewOverlay, transcribe_live
+from .preview import PreviewOverlay
+from .session import RecordingSession
 from .settings import APP_DIR, Settings, get_api_key, show_settings
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,8 @@ def _close_model(model: Future[LocalAsrEngine] | None) -> None:
     if model is None:
         return
     if not model.done():
-        model.cancel()
+        if not model.cancel():
+            model.add_done_callback(_close_model)
     elif not model.cancelled() and model.exception() is None:
         model.result().close()
 
@@ -73,6 +74,7 @@ def complete_recording(
     markdown: bool = False,
     on_refine: Callable[[str], None] | None = None,
     preview: PreviewText | None = None,
+    deliver: Callable[[str], None] | None = None,
 ) -> str:
     text = run_pipeline(
         path,
@@ -83,7 +85,7 @@ def complete_recording(
         on_refine=on_refine,
         preview=preview,
     )
-    deliver_text(text)
+    (deliver or deliver_text)(text)
     try:
         path.unlink()
     except OSError:
@@ -111,14 +113,10 @@ class VoiceCommander:
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voicecommander")
         self.state = State.IDLE
         self._lock = threading.Lock()
-        self._timer: threading.Timer | None = None
-        self._preview_stop = threading.Event()
-        self._preview_stop.set()
         self._preview_updates: queue.SimpleQueue[PreviewText | str | None] = queue.SimpleQueue()
-        self._preview_language: queue.SimpleQueue[str] = queue.SimpleQueue()
-        self._preview_commit: PreviewText | None = None
+        self._session: RecordingSession | None = None
+        self._closing = False
         self._menu_open = False
-        self._markdown = False
         self._settings_requested = threading.Event()
         self._local_model = self._load_model(settings)
 
@@ -129,7 +127,7 @@ class VoiceCommander:
 
     def on_hotkey(self, markdown: bool = False) -> None:
         with self._lock:
-            if self._menu_open:
+            if self._menu_open or self._closing:
                 return
             if self.state is State.PROCESSING:
                 logger.info("Ignoring hotkey while processing")
@@ -198,118 +196,80 @@ class VoiceCommander:
                 self._menu_open = False
 
     def _start_recording(self, markdown: bool = False) -> None:
+        session = RecordingSession(
+            self.recorder, self.settings, self._local_model, markdown, self._preview_updates
+        )
         try:
-            self.recorder.start()
+            session.start(self._recording_limit)
         except Exception as error:
+            self._preview_updates.put(None)
             logger.exception("Could not start recording")
             _notify("VoiceCommander", str(error), error=True)
             return
         self.state = State.RECORDING
-        self._markdown = markdown
-        self._timer = threading.Timer(self.settings.max_seconds, self._recording_limit)
-        self._timer.daemon = True
-        self._timer.start()
-        self._preview_commit = None
-        if (
-            self.settings.live_preview
-            and self._local_model is not None
-            and self.settings.local_asr_model in PREVIEW_MODELS
-        ):
-            stop = threading.Event()
-            languages: queue.SimpleQueue[str] = queue.SimpleQueue()
-            self._preview_stop = stop
-            self._preview_language = languages
-            self._preview_updates.put("Listening")
-            threading.Thread(target=self._preview, args=(stop, languages), daemon=True).start()
+        self._session = session
         logger.info("Recording started in %s mode", "Markdown" if markdown else "text")
         _beep(900)
 
-    def _preview(self, stop: threading.Event, languages: queue.SimpleQueue[str]) -> None:
-        try:
-            for update in transcribe_live(
-                self.recorder,
-                self._local_model.result(),
-                self.settings,
-                stop,
-                languages,
-            ):
-                self._preview_commit = update
-                self._preview_updates.put(update)
-        except Exception as error:
-            logger.exception("Live preview failed; recording continues")
-            if not stop.is_set():
-                self._preview_updates.put(f"Preview unavailable: {error}")
-
     def _stop_recording(self) -> None:
         self.state = State.PROCESSING
-        if self._timer:
-            self._timer.cancel()
-            self._timer = None
-        if not self._preview_stop.is_set():
-            self._preview_stop.set()
-            self._preview_updates.put("Finalizing")
+        session = self._session
         try:
-            path = self.recorder.stop()
-            recording_settings = self.settings
-            try:
-                recording_settings = replace(
-                    recording_settings, language=self._preview_language.get_nowait()
-                )
-            except queue.Empty:
-                pass
-            self.executor.submit(
-                self._finish,
-                path,
-                self._markdown,
-                recording_settings,
-                self._preview_commit,
-            )
+            path = session.stop()
+            self.executor.submit(self._finish, session)
         except Exception as error:
-            self._preview_stop.set()
+            session.close()
             self._preview_updates.put(None)
             self.state = State.IDLE
+            self._session = None
             logger.exception("Could not stop recording")
             _notify("VoiceCommander", str(error), error=True)
             return
         logger.info("Recording stopped; processing %s", path.name)
         _beep(650)
 
-    def _recording_limit(self) -> None:
+    def _recording_limit(self, session: RecordingSession) -> None:
         with self._lock:
-            if self.state is State.RECORDING:
+            if not self._closing and self.state is State.RECORDING and self._session is session:
                 logger.info("Recording limit reached")
                 self._stop_recording()
 
-    def _finish(
-        self,
-        path: Path,
-        markdown: bool = False,
-        settings: Settings | None = None,
-        preview: PreviewText | None = None,
-    ) -> None:
-        settings = settings or self.settings
+    def _finish(self, session: RecordingSession) -> None:
+        path = session.path
         try:
-            model = self._local_model.result() if self._local_model else None
-            key = get_api_key() if settings.uses_openrouter or markdown else ""
+            settings, preview = session.wait_preview()
+            if self._closing:
+                return
+            model = session.model.result() if session.model else None
+            key = get_api_key() if settings.uses_openrouter or session.markdown else ""
             complete_recording(
                 path,
                 settings,
                 model,
                 key,
-                markdown=markdown,
+                markdown=session.markdown,
                 on_refine=lambda text: self._preview_updates.put(text or "Refining"),
                 preview=preview,
+                deliver=self._deliver,
             )
-            _beep(1100)
+            if not self._closing:
+                _beep(1100)
         except Exception as error:
             logger.exception("Pipeline failed; recording preserved at %s", path)
-            _notify("VoiceCommander failed", f"{error}\n\nRecording preserved at:\n{path}", error=True)
+            if not self._closing:
+                _notify("VoiceCommander failed", f"{error}\n\nRecording preserved at:\n{path}", error=True)
         finally:
-            self._preview_stop.set()
-            self._preview_updates.put(None)
             with self._lock:
-                self.state = State.IDLE
-                self._markdown = False
+                if self._session is session:
+                    self._preview_updates.put(None)
+                    self.state = State.IDLE
+                    self._session = None
+
+    def _deliver(self, text: str) -> None:
+        with self._lock:
+            if self._closing:
+                raise RuntimeError("Application closed before transcript delivery")
+            deliver_text(text)
 
     def run(self) -> int:
         import keyboard
@@ -339,11 +299,15 @@ class VoiceCommander:
         except KeyboardInterrupt:
             logger.info("VoiceCommander stopped")
         finally:
-            self._preview_stop.set()
+            with self._lock:
+                self._closing = True
+                session = self._session
             keyboard.unhook_all_hotkeys()
             overlay.close()
             try:
-                _close_model(self._local_model)
+                if session is not None:
+                    session.close()
             finally:
-                self.executor.shutdown(wait=False, cancel_futures=True)
+                self.executor.shutdown(wait=True, cancel_futures=True)
+                _close_model(self._local_model)
         return 0

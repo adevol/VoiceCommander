@@ -96,22 +96,32 @@ class LocalAsrEngine:
     _server: _WhisperServer | None = field(default=None, init=False, repr=False)
     _preview_lock: Lock = field(default_factory=Lock, init=False, repr=False)
     _preview_cancel: Event = field(default_factory=Event, init=False, repr=False)
+    _closed: bool = field(default=False, init=False, repr=False)
 
-    def preview(self, pcm16: bytes, settings: Settings) -> PreviewResult | None:
+    def preview(
+        self, pcm16: bytes, settings: Settings, stop: Event | None = None
+    ) -> PreviewResult | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
         if not self._preview_lock.acquire(blocking=False):
             return None
         try:
-            return self._decode_pcm(pcm16, settings)
+            return self._decode_pcm(pcm16, settings, stop)
         finally:
             self._preview_lock.release()
 
-    def _decode_pcm(self, pcm16: bytes, settings: Settings) -> PreviewResult:
+    def _decode_pcm(
+        self, pcm16: bytes, settings: Settings, stop: Event | None = None
+    ) -> PreviewResult:
         self._preview_cancel.clear()
+        if self._closed or (stop is not None and stop.is_set()):
+            raise RuntimeError("Whisper preview cancelled")
         if self._server is None or self._server.process.poll() is not None:
             self._server = _start_whisper_server(
                 self.server_executable, self.model, self._preview_cancel
             )
+        if self._preview_cancel.is_set() or (stop is not None and stop.is_set()):
+            self._server.close()
+            raise RuntimeError("Whisper preview cancelled")
         return self._server.transcribe(pcm16, settings)
 
     def transcribe(
@@ -120,6 +130,8 @@ class LocalAsrEngine:
         settings: Settings,
         preview: PreviewText | None = None,
     ) -> str:
+        if self._closed:
+            raise RuntimeError("Local ASR engine is closed")
         joined = self._finalize_tail(path, settings, preview)
         return joined or _transcribe_whisper(self.executable, self.model, path, settings)
 
@@ -158,11 +170,20 @@ class LocalAsrEngine:
         joined = merge_overlapping_text(preview.stable, result.text, 3)
         return joined if joined and joined != preview.stable else None
 
-    def close(self) -> None:
+    def cancel_preview(self) -> None:
+        """Interrupt an active server request or server startup."""
         self._preview_cancel.set()
         if self._server is not None:
             self._server.close()
+
+    def close(self) -> None:
+        self._closed = True
+        server = self._server
+        self.cancel_preview()
         with self._preview_lock:
+            # Startup may have returned its process after cancellation began.
+            if self._server is not None and self._server is not server:
+                self._server.close()
             self._server = None
 
 

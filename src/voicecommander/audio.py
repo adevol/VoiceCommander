@@ -61,7 +61,14 @@ class Recorder:
                 device=device,
                 callback=self._capture,
             )
-            self._stream.start()
+            stream = self._stream
+        try:
+            stream.start()
+        except Exception:
+            with self._lock:
+                self._stream = None
+            stream.close()
+            raise
 
     def _capture(self, data, frames, time, status) -> None:
         if status:
@@ -79,8 +86,10 @@ class Recorder:
             if self._stream is None:
                 raise RuntimeError("Recording is not active")
             stream, self._stream = self._stream, None
-        stream.stop()
-        stream.close()
+        try:
+            stream.stop()
+        finally:
+            stream.close()
         with self._lock:
             if not self._chunks:
                 raise RuntimeError("No audio was recorded")

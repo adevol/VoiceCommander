@@ -15,6 +15,7 @@ from urllib.error import HTTPError
 
 from voicecommander.app import State, VoiceCommander, complete_recording
 from voicecommander.audio import Recorder, write_wav
+from voicecommander.session import RecordingSession
 from voicecommander.captions import (
     _merge_caption_text,
     _put_latest,
@@ -1003,79 +1004,39 @@ class VoiceCommanderTests(unittest.TestCase):
             app = VoiceCommander(settings)
             app.state = State.PROCESSING
 
-            app._finish(Path("recording.wav"), settings=settings)
+            session = RecordingSession(app.recorder, settings, None, False, app._preview_updates)
+            session.path = Path("recording.wav")
+            app._session = session
+            app._finish(session)
 
         self.assertEqual(app._preview_updates.get_nowait(), "Refining")
         self.assertEqual(app._preview_updates.get_nowait(), "Edited text")
         self.assertIsNone(app._preview_updates.get_nowait())
         self.assertEqual(app.state, State.IDLE)
 
+    @patch("voicecommander.app._beep")
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
     @patch("voicecommander.app.Recorder")
-    @patch("voicecommander.app.threading.Thread")
-    def test_each_preview_worker_keeps_its_own_stop_event(
-        self,
-        thread_type: Mock,
-        recorder_type: Mock,
-        executor_type: Mock,
-        timer: Mock,
+    def test_old_timer_cannot_stop_a_new_recording(
+        self, recorder_type: Mock, executor_type: Mock, timer: Mock, beep: Mock
     ) -> None:
         recorder_type.return_value.stop.return_value = Path("recording.wav")
-        model_future = executor_type.return_value.submit.return_value
-        model_future.done.return_value = True
-        model_future.cancelled.return_value = False
-        model_future.exception.return_value = None
-        app = VoiceCommander(Settings(local_asr_model="small"))
-
+        app = VoiceCommander(Settings(asr_provider="openrouter"))
         app.on_hotkey()
-
-        first_stop = app._preview_stop
-        first_languages = app._preview_language
-        self.assertEqual(app._preview_updates.get_nowait(), "Listening")
-        thread_type.assert_called_once_with(
-            target=app._preview, args=(first_stop, first_languages), daemon=True
-        )
-        thread_type.return_value.start.assert_called_once()
-
-        first_languages.put("de")
-        committed = PreviewText("Hallo", " Welt", 2.5)
-        app._preview_commit = committed
+        first = app._session
+        old_timer = timer.call_args.args[1]
         app.on_hotkey()
-
-        self.assertTrue(first_stop.is_set())
-        self.assertEqual(app._preview_updates.get_nowait(), "Finalizing")
-        finish_args = executor_type.return_value.submit.call_args.args
-        self.assertEqual(finish_args[-2].language, "de")
-        self.assertEqual(finish_args[-1], committed)
-
         app.state = State.IDLE
         app.on_hotkey()
+        second = app._session
 
-        second_stop = app._preview_stop
-        second_languages = app._preview_language
-        self.assertIsNot(first_stop, second_stop)
-        self.assertIsNot(first_languages, second_languages)
-        self.assertTrue(first_stop.is_set())
-        self.assertFalse(second_stop.is_set())
+        old_timer()
 
-    @patch("voicecommander.app.threading.Timer")
-    @patch("voicecommander.app.ThreadPoolExecutor")
-    @patch("voicecommander.app.Recorder")
-    @patch("voicecommander.app._beep")
-    def test_recording_without_preview_clears_the_previous_commit(
-        self,
-        beep: Mock,
-        recorder_type: Mock,
-        executor_type: Mock,
-        timer: Mock,
-    ) -> None:
-        app = VoiceCommander(Settings(live_preview=False))
-        app._preview_commit = PreviewText("Old recording", "", 24.0)
-
-        app._start_recording()
-
-        self.assertIsNone(app._preview_commit)
+        self.assertIsNot(first, second)
+        self.assertIs(app._session, second)
+        self.assertEqual(app.state, State.RECORDING)
+        recorder_type.return_value.stop.assert_called_once()
 
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
@@ -1118,13 +1079,9 @@ class VoiceCommanderTests(unittest.TestCase):
         markdown_callback()
         markdown_callback()
 
-        executor_type.return_value.submit.assert_called_once_with(
-            app._finish,
-            Path("recording.wav"),
-            True,
-            Settings(asr_provider="openrouter"),
-            None,
-        )
+        executor_type.return_value.submit.assert_called_once_with(app._finish, app._session)
+        self.assertTrue(app._session.markdown)
+        self.assertEqual(app._session.path, Path("recording.wav"))
         ctrl_pressed.assert_called()
 
     def test_settings_hotkey_applies_runtime_changes(self) -> None:
@@ -1175,8 +1132,12 @@ class VoiceCommanderTests(unittest.TestCase):
             run_first_tk_poll(tkinter.Tk.return_value)
             app = VoiceCommander(Settings(asr_provider="openrouter"))
             app.request_settings()
+            def interact() -> None:
+                tkinter.Tk.return_value.after.call_args.args[1]()
+                app.on_hotkey()
+                raise KeyboardInterrupt
+            tkinter.Tk.return_value.mainloop.side_effect = interact
             app.run()
-            app.on_hotkey()
 
         tkinter.Tk.assert_called_once_with()
         tkinter.Toplevel.assert_called_once_with(tkinter.Tk.return_value)

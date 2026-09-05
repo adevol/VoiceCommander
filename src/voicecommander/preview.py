@@ -51,7 +51,7 @@ def transcribe_live(
             continue
         if stop.is_set():
             break
-        result = model.preview(pcm16, settings_for_recording)
+        result = model.preview(pcm16, settings_for_recording, stop)
         if result is None or stop.is_set():
             continue
         if settings_for_recording.language == "auto" and result.language and result.text:
