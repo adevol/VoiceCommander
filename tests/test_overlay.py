@@ -1,57 +1,39 @@
 import queue
 import unittest
+from unittest.mock import Mock, patch
+from sys import modules
 
+from voicecommander.local_asr import PreviewText
 from voicecommander.preview import PreviewOverlay
-
-
-class _Root:
-    def __init__(self):
-        self.withdrawn = 0
-        self.shown = 0
-        self.lifted = 0
-        self.geometries = []
-
-    def withdraw(self):
-        self.withdrawn += 1
-
-    def update_idletasks(self):
-        pass
-
-    def winfo_screenwidth(self):
-        return 1000
-
-    def geometry(self, value):
-        self.geometries.append(value)
-
-    def deiconify(self):
-        self.shown += 1
-
-    def lift(self):
-        self.lifted += 1
-
-
-class _Text:
-    def __init__(self):
-        self.value = None
-
-    def configure(self, **kwargs):
-        self.value = kwargs["text"]
-
-    def winfo_reqwidth(self):
-        return 100
-
-    def winfo_reqheight(self):
-        return 20
 
 
 def _overlay():
     overlay = PreviewOverlay.__new__(PreviewOverlay)
-    overlay.root = _Root()
-    overlay.text = _Text()
+    overlay.root = Mock()
+    overlay.root.winfo_screenwidth.return_value = 1000
+    overlay.text = Mock()
+    overlay.text.winfo_reqwidth.return_value = 100
+    overlay.text.winfo_reqheight.return_value = 20
     return overlay
 
 
 class PreviewOverlayTests(unittest.TestCase):
+    def test_preview_overlay_consumes_worker_updates(self) -> None:
+        tkinter = Mock()
+        tkinter.Tk.return_value.winfo_screenwidth.return_value = 1920
+        tkinter.Label.return_value.winfo_reqwidth.return_value = 300
+        tkinter.Label.return_value.winfo_reqheight.return_value = 40
+        updates = queue.SimpleQueue()
+        updates.put(PreviewText("Hello", " world", 1.0))
+
+        with patch.dict(modules, {"tkinter": tkinter}):
+            overlay = PreviewOverlay()
+            overlay.pump(updates)
+
+        tkinter.Label.return_value.configure.assert_called_once_with(text="Hello world")
+        tkinter.Tk.return_value.deiconify.assert_called_once()
+        tkinter.Tk.return_value.update.assert_not_called()
+
     def test_pump_renders_only_latest_text(self):
         overlay = _overlay()
         updates = queue.SimpleQueue()
@@ -60,9 +42,9 @@ class PreviewOverlayTests(unittest.TestCase):
 
         overlay.pump(updates)
 
-        self.assertEqual(overlay.text.value, "latest")
-        self.assertEqual(overlay.root.shown, 1)
-        self.assertEqual(overlay.root.lifted, 1)
+        overlay.text.configure.assert_called_once_with(text="latest")
+        overlay.root.deiconify.assert_called_once_with()
+        overlay.root.lift.assert_called_once_with()
 
     def test_pump_latest_none_hides_overlay(self):
         overlay = _overlay()
@@ -72,17 +54,17 @@ class PreviewOverlayTests(unittest.TestCase):
 
         overlay.pump(updates)
 
-        self.assertEqual(overlay.root.withdrawn, 1)
-        self.assertEqual(overlay.root.shown, 0)
+        overlay.root.withdraw.assert_called_once_with()
+        overlay.root.deiconify.assert_not_called()
 
     def test_pump_empty_queue_leaves_overlay_unchanged(self):
         overlay = _overlay()
 
         overlay.pump(queue.SimpleQueue())
 
-        self.assertEqual(overlay.root.withdrawn, 0)
-        self.assertEqual(overlay.root.shown, 0)
-        self.assertIsNone(overlay.text.value)
+        overlay.root.withdraw.assert_not_called()
+        overlay.root.deiconify.assert_not_called()
+        overlay.text.configure.assert_not_called()
 
     def test_pump_can_show_text_after_hide(self):
         overlay = _overlay()
@@ -93,9 +75,9 @@ class PreviewOverlayTests(unittest.TestCase):
         updates.put("new text")
         overlay.pump(updates)
 
-        self.assertEqual(overlay.root.withdrawn, 1)
-        self.assertEqual(overlay.root.shown, 1)
-        self.assertEqual(overlay.text.value, "new text")
+        overlay.root.withdraw.assert_called_once_with()
+        overlay.root.deiconify.assert_called_once_with()
+        overlay.text.configure.assert_called_once_with(text="new text")
 
 
 if __name__ == "__main__":
