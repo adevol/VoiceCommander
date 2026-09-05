@@ -166,6 +166,17 @@ uv run python -m unittest discover -s tests
 uv run python scripts/benchmark_asr.py recording.wav --model base
 ```
 
+Each dictation has a recording session that owns capture, its timer, preview
+state, and final transcription. Stopping capture prevents further preview
+updates. Finalization drains the preview worker, cancelling a slow request
+after a short grace period, before reusing confirmed text or decoding the full
+file. The text pipeline handles refinement and its fallback rules. The app
+pastes the completed result and deletes the WAV only after successful delivery.
+
+Shutdown stops capture and preview, prevents further pastes, and waits for
+in-flight model downloads or finalization requests before closing the model.
+Those requests can delay process exit until they complete or time out.
+
 Install Inno Setup, then build the installer:
 
 ```powershell

@@ -59,7 +59,7 @@ class LifecycleTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch("voicecommander.app.Recorder"),
             patch("voicecommander.app.ThreadPoolExecutor"),
-            patch("voicecommander.app.run_pipeline") as pipeline,
+            patch("voicecommander.session.transcribe_openrouter") as pipeline,
             patch("voicecommander.app.deliver_text") as deliver,
             patch("voicecommander.app._notify") as notify,
         ):

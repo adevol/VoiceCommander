@@ -16,7 +16,6 @@ from typing import Callable
 
 from .audio import Recorder
 from .local_asr import LocalAsrEngine, PreviewText, load_local_model
-from .pipeline import run_pipeline
 from .preview import PreviewOverlay
 from .session import RecordingSession
 from .settings import APP_DIR, Settings, get_api_key, show_settings
@@ -67,29 +66,17 @@ def deliver_text(text: str) -> None:
 
 
 def complete_recording(
-    path: Path,
-    settings: Settings,
-    loaded_model: LocalAsrEngine | None,
+    session: RecordingSession,
     api_key: str,
-    markdown: bool = False,
     on_refine: Callable[[str], None] | None = None,
-    preview: PreviewText | None = None,
     deliver: Callable[[str], None] | None = None,
 ) -> str:
-    text = run_pipeline(
-        path,
-        settings,
-        loaded_model,
-        api_key,
-        markdown=markdown,
-        on_refine=on_refine,
-        preview=preview,
-    )
+    text = session.finish(api_key, on_refine)
     (deliver or deliver_text)(text)
     try:
-        path.unlink()
+        session.path.unlink()
     except OSError:
-        logger.warning("Could not delete completed recording %s", path, exc_info=True)
+        logger.warning("Could not delete completed recording %s", session.path, exc_info=True)
     return text
 
 
@@ -237,19 +224,13 @@ class VoiceCommander:
     def _finish(self, session: RecordingSession) -> None:
         path = session.path
         try:
-            settings, preview = session.wait_preview()
             if self._closing:
                 return
-            model = session.model.result() if session.model else None
-            key = get_api_key() if settings.uses_openrouter or session.markdown else ""
+            key = get_api_key() if session.settings.uses_openrouter or session.markdown else ""
             complete_recording(
-                path,
-                settings,
-                model,
+                session,
                 key,
-                markdown=session.markdown,
                 on_refine=lambda text: self._preview_updates.put(text or "Refining"),
-                preview=preview,
                 deliver=self._deliver,
             )
             if not self._closing:

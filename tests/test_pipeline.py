@@ -39,7 +39,7 @@ from voicecommander.pipeline import (
     _openrouter,
     postprocess_openrouter,
     postprocess_openrouter_stream,
-    run_pipeline,
+    refine_transcript,
     transcribe_openrouter,
 )
 from voicecommander.preview import PreviewOverlay, transcribe_live
@@ -489,24 +489,17 @@ class VoiceCommanderTests(unittest.TestCase):
         self.assertTrue(model._preview_cancel.is_set())
         server.close.assert_called_once_with()
 
-    def test_local_pipeline_refines_only_the_final_transcript(self) -> None:
+    def test_refinement_receives_only_the_final_transcript(self) -> None:
         settings = Settings(postprocess_strength=50)
-        engine = Mock()
-        engine.transcribe.return_value = "raw transcript"
-        preview = PreviewText("stable words", " tentative", 3.0)
-
         with patch(
             "voicecommander.pipeline.postprocess_openrouter", return_value="edited transcript"
         ) as postprocess:
-            result = run_pipeline(
-                Path("recording.wav"), settings, engine, "secret", preview=preview
-            )
-
+            result = refine_transcript("raw transcript", settings, "secret")
         self.assertEqual(result, "edited transcript")
-        engine.transcribe.assert_called_once_with(Path("recording.wav"), settings, preview)
         postprocess.assert_called_once_with(
             "raw transcript", settings, "secret", markdown=False
         )
+
 
     @patch("voicecommander.local_asr._download")
     def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
@@ -739,16 +732,12 @@ class VoiceCommanderTests(unittest.TestCase):
 
         with (
             patch(
-                "voicecommander.pipeline.transcribe_openrouter",
-                return_value="raw transcript",
-            ),
-            patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 side_effect=RuntimeError("cloud unavailable"),
             ),
             self.assertLogs("voicecommander.pipeline", level="ERROR"),
         ):
-            result = run_pipeline(Path("recording.wav"), settings, None, "secret")
+            result = refine_transcript("raw transcript", settings, "secret")
         self.assertEqual(result, "raw transcript")
 
     @patch("voicecommander.pipeline.monotonic", side_effect=[0.0, 0.1, 0.2])
@@ -781,16 +770,13 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_stream_failure_retries_without_streaming(
         self, stream: Mock, postprocess: Mock
     ) -> None:
-        engine = Mock()
-        engine.transcribe.return_value = "Raw"
         updates = Mock()
         settings = Settings(postprocess_strength=50)
 
         with self.assertLogs("voicecommander.pipeline", level="ERROR"):
-            result = run_pipeline(
-                Path("recording.wav"),
+            result = refine_transcript(
+                "Raw",
                 settings,
-                engine,
                 "secret",
                 on_refine=updates,
             )
@@ -833,18 +819,13 @@ class VoiceCommanderTests(unittest.TestCase):
         settings = Settings(asr_provider="openrouter", postprocess_strength=0)
         with (
             patch(
-                "voicecommander.pipeline.transcribe_openrouter",
-                return_value="raw description",
-            ),
-            patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 return_value="# Finished",
             ) as postprocess,
         ):
-            result = run_pipeline(
-                Path("recording.wav"),
+            result = refine_transcript(
+                "raw description",
                 settings,
-                None,
                 "secret",
                 markdown=True,
             )
@@ -857,19 +838,14 @@ class VoiceCommanderTests(unittest.TestCase):
         settings = Settings(asr_provider="openrouter", postprocess_strength=0)
         with (
             patch(
-                "voicecommander.pipeline.transcribe_openrouter",
-                return_value="raw description",
-            ),
-            patch(
                 "voicecommander.pipeline.postprocess_openrouter",
                 side_effect=RuntimeError("cloud unavailable"),
             ),
             self.assertRaisesRegex(RuntimeError, "cloud unavailable"),
         ):
-            run_pipeline(
-                Path("recording.wav"),
+            refine_transcript(
+                "raw description",
                 settings,
-                None,
                 "secret",
                 markdown=True,
             )
@@ -952,41 +928,40 @@ class VoiceCommanderTests(unittest.TestCase):
     def test_zero_editing_strength_keeps_raw_transcript(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=0)
         with (
-            patch(
-                "voicecommander.pipeline.transcribe_openrouter",
-                return_value="raw transcript",
-            ),
             patch("voicecommander.pipeline.postprocess_openrouter") as postprocess,
         ):
-            result = run_pipeline(
-                Path("recording.wav"),
+            result = refine_transcript(
+                "raw transcript",
                 settings,
-                None,
                 "secret",
             )
         self.assertEqual(result, "raw transcript")
         postprocess.assert_not_called()
 
     @patch("voicecommander.app.deliver_text")
-    @patch("voicecommander.app.run_pipeline")
-    def test_recording_is_deleted_only_after_success(
-        self, process: Mock, deliver: Mock
-    ) -> None:
-        settings = Settings(asr_provider="openrouter")
+    def test_recording_is_deleted_only_after_success(self, deliver: Mock) -> None:
+        session = Mock(spec=RecordingSession)
         with tempfile.TemporaryDirectory() as directory:
-            success = Path(directory) / "success.wav"
-            success.touch()
-            process.return_value = "done"
-            complete_recording(success, settings, None, "")
-            self.assertFalse(success.exists())
+            session.path = Path(directory) / "success.wav"
+            session.path.touch()
+            session.finish.return_value = "done"
+            complete_recording(session, "")
+            self.assertFalse(session.path.exists())
             deliver.assert_called_once_with("done")
 
-            failure = Path(directory) / "failure.wav"
-            failure.touch()
-            process.side_effect = RuntimeError("failed")
+            session.path = Path(directory) / "failure.wav"
+            session.path.touch()
+            session.finish.side_effect = RuntimeError("failed")
             with self.assertRaises(RuntimeError):
-                complete_recording(failure, settings, None, "")
-            self.assertTrue(failure.exists())
+                complete_recording(session, "")
+            self.assertTrue(session.path.exists())
+
+            session.finish.side_effect = None
+            deliver.side_effect = RuntimeError("paste failed")
+            with self.assertRaisesRegex(RuntimeError, "paste failed"):
+                complete_recording(session, "")
+            self.assertTrue(session.path.exists())
+
 
     def test_streaming_refinement_updates_the_overlay_queue(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=50)
