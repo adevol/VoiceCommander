@@ -111,24 +111,29 @@ class PreviewOverlay:
         self.text.pack(padx=20, pady=14)
 
     def pump(self, updates: queue.SimpleQueue[PreviewText | str | None]) -> None:
+        latest: PreviewText | str | None = None
+        received = False
         while True:
             try:
-                text = updates.get_nowait()
+                latest = updates.get_nowait()
+                received = True
             except queue.Empty:
                 break
-            if text is None:
-                self.root.withdraw()
-                continue
-            if isinstance(text, PreviewText):
-                text = text.text
-            self.text.configure(text=text)
-            self.root.update_idletasks()
-            width = min(760, max(260, self.text.winfo_reqwidth() + 40))
-            height = self.text.winfo_reqheight() + 28
-            x = (self.root.winfo_screenwidth() - width) // 2
-            self.root.geometry(f"{width}x{height}+{x}+28")
-            self.root.deiconify()
-            self.root.lift()
+        if not received:
+            return
+        if latest is None:
+            self.root.withdraw()
+            return
+        if isinstance(latest, PreviewText):
+            latest = latest.text
+        self.text.configure(text=latest)
+        self.root.update_idletasks()
+        width = min(760, max(260, self.text.winfo_reqwidth() + 40))
+        height = self.text.winfo_reqheight() + 28
+        x = (self.root.winfo_screenwidth() - width) // 2
+        self.root.geometry(f"{width}x{height}+{x}+28")
+        self.root.deiconify()
+        self.root.lift()
 
     def close(self) -> None:
         self.root.destroy()
