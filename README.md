@@ -61,7 +61,7 @@ flowchart TD
 
 ## Where your data goes
 
-Each recording becomes a temporary WAV file. With a local `tiny` or `base`
+Each recording becomes a temporary WAV file. With a local preview,
 preview, VoiceCommander confirms older segments that agree across consecutive
 passes. Every two seconds it decodes an eight-second window that begins two
 seconds before the last confirmed point. When that prefix lets a long recording
@@ -74,7 +74,7 @@ transcription. Tentative preview text is never committed.
 ```mermaid
 flowchart LR
     A[Microphone] --> B[Temporary WAV]
-    A -->|tiny or base| P[Confirmed prefix plus open tail]
+    A -->|local preview| P[Confirmed prefix plus open tail]
     B -->|Long local recording| C[Warm overlapped-tail finalization]
     P --> C
     C -. Short or unsafe join .-> H[Full-file Whisper fallback]
@@ -89,9 +89,9 @@ flowchart LR
 
 The solid route is local and is the default. Cloud transcription sends the WAV
 file to the audio-capable OpenRouter model ID entered in settings. Editing and
-Markdown send only the final transcript. Local `tiny` and `base` show tentative
-text while recording. You can disable Live local preview in settings. `small`
-remains final-only because it missed the preview latency gate.
+Markdown send only the final transcript. All local models show tentative text
+while recording; `small` updates more slowly. You can disable Live local preview
+in settings.
 
 Every cloud request sets
 [`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),

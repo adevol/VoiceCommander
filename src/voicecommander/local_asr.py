@@ -35,6 +35,14 @@ MIN_REUSABLE_PREVIEW_SECONDS = 22.0
 TAIL_PROMPT_WORDS = 50
 
 
+def is_speech(text: str) -> bool:
+    """Report whether a transcript is speech rather than a non-speech label."""
+    return bool(text) and not (
+        (text.startswith("[") and text.endswith("]"))
+        or (text.startswith("(") and text.endswith(")"))
+    )
+
+
 def merge_overlapping_text(
     previous: str, current: str, minimum_words: int = 1
 ) -> str | None:

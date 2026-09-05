@@ -1,9 +1,9 @@
 """Settings: the dataclass, its validation, its TOML file, and the settings window.
 
 Attributes:
-    WHISPER_MODELS: Quantised multilingual whisper.cpp builds, largest last, each
-        paired with the Hugging Face LFS oid at `WHISPER_REVISION` that
-        `local_asr._download` enforces.
+    WHISPER_DEFINITIONS: Quantised multilingual whisper.cpp builds, largest last,
+        with their download hashes and preview capability. WHISPER_MODELS is a
+        tuple-compatible filename/hash view for existing consumers.
     VOCABULARY_LIMIT: Characters accepted in the custom vocabulary.
 """
 
@@ -21,12 +21,33 @@ KEYRING_SERVICE = "VoiceCommander"
 KEYRING_USER = "OpenRouter"
 ASR_PROVIDERS = ("local", "openrouter")
 WHISPER_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
-WHISPER_MODELS = {
-    "tiny": ("ggml-tiny-q5_1.bin", "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7"),
-    "base": ("ggml-base-q5_1.bin", "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"),
-    "small": ("ggml-small-q5_1.bin", "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"),
+@dataclass(frozen=True, slots=True)
+class WhisperModel:
+    filename: str
+    sha256: str
+    preview: bool = True
+
+
+# Canonical model metadata. WHISPER_MODELS below remains a tuple view for
+# existing download and benchmark consumers.
+WHISPER_DEFINITIONS = {
+    "tiny": WhisperModel(
+        "ggml-tiny-q5_1.bin",
+        "818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7",
+    ),
+    "base": WhisperModel(
+        "ggml-base-q5_1.bin",
+        "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898",
+    ),
+    "small": WhisperModel(
+        "ggml-small-q5_1.bin",
+        "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+    ),
 }
-LOCAL_ASR_MODELS = tuple(WHISPER_MODELS)
+WHISPER_MODELS = {
+    name: (model.filename, model.sha256) for name, model in WHISPER_DEFINITIONS.items()
+}
+LOCAL_ASR_MODELS = tuple(WHISPER_DEFINITIONS)
 LOCAL_MODEL_MIGRATIONS = {
     "large-v3-turbo": "small",
     "parakeet-tdt-v3": "base",

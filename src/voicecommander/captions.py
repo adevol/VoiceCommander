@@ -16,7 +16,7 @@ from collections import deque
 from contextlib import suppress
 
 from .audio import SAMPLE_RATE
-from .local_asr import load_local_model, merge_overlapping_text
+from .local_asr import is_speech, load_local_model, merge_overlapping_text
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -44,22 +44,6 @@ def _put_latest(items: queue.Queue, item: object) -> None:
     with suppress(queue.Empty):
         items.get_nowait()
     items.put_nowait(item)
-
-
-def is_speech(text: str) -> bool:
-    """Report whether a transcript is speech rather than a non-speech label.
-
-    Args:
-        text: A transcript from Whisper.
-
-    Returns:
-        True if the text looks like speech, and False for the bracketed or
-        parenthesised labels Whisper gives non-speech audio.
-    """
-    return bool(text) and not (
-        (text.startswith("[") and text.endswith("]"))
-        or (text.startswith("(") and text.endswith(")"))
-    )
 
 
 def _capture(chunks: queue.Queue, lines: queue.Queue, stop: threading.Event) -> None:

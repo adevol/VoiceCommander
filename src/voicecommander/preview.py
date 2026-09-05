@@ -12,14 +12,17 @@ from .local_asr import (
     LocalAsrEngine,
     PreviewSegment,
     PreviewText,
+    is_speech,
     merge_overlapping_text,
 )
-from .settings import Settings
+from .settings import WHISPER_DEFINITIONS, Settings
 
 PREVIEW_INTERVAL = 2.0
 PREVIEW_WINDOW_SECONDS = 8.0
 CORRECTION_HORIZON = 2.0
-PREVIEW_MODELS = {"tiny", "base", "small"}
+PREVIEW_MODELS = frozenset(
+    name for name, model in WHISPER_DEFINITIONS.items() if model.preview
+)
 PREVIEW_WINDOW_BYTES = round(
     PREVIEW_WINDOW_SECONDS * SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH
 )
@@ -52,13 +55,7 @@ def transcribe_live(
         if result is None or stop.is_set():
             continue
         if settings_for_recording.language == "auto" and result.language and result.text:
-            noise = (
-                result.text.startswith("[")
-                and result.text.endswith("]")
-                or result.text.startswith("(")
-                and result.text.endswith(")")
-            )
-            if not noise:
+            if is_speech(result.text):
                 settings_for_recording = replace(settings_for_recording, language=result.language)
                 languages.put(result.language)
         eligible = tuple(
