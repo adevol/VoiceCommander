@@ -30,7 +30,7 @@ class Recorder:
     """Records the microphone to a WAV file between `start` and `stop`.
 
     Attributes:
-        input_device: An "index: name" entry from `settings._microphones`, of which
+        input_device: An "index: name" entry from `settings_ui._microphones`, of which
             only the leading index is used, or empty for the system default.
     """
 

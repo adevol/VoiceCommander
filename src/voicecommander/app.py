@@ -18,7 +18,8 @@ from .audio import Recorder
 from .local_asr import LocalAsrEngine, PreviewText, load_local_model
 from .preview import PreviewOverlay
 from .session import RecordingSession
-from .settings import APP_DIR, Settings, get_api_key, show_settings
+from .settings import APP_DIR, Settings, get_api_key
+from .settings_ui import show_settings
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,8 @@ import argparse
 import logging
 
 from voicecommander.app import VoiceCommander, configure_logging
-from voicecommander.settings import CONFIG_PATH, Settings, load_settings, show_settings
+from voicecommander.settings import CONFIG_PATH, Settings, load_settings
+from voicecommander.settings_ui import show_settings
 
 
 def main() -> int:
