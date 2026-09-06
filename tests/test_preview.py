@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import queue
 import unittest
 from unittest.mock import Mock, call
 
@@ -10,6 +9,25 @@ from voicecommander.settings import Settings
 
 
 class PreviewTests(unittest.TestCase):
+    def test_noise_does_not_lock_language_and_forced_language_is_preserved(self):
+        for language, expected in (("auto", [None, "de", "de"]), ("en-US", ["en-US"] * 3)):
+            with self.subTest(language=language):
+                recorder = Mock()
+                recorder.snapshot.return_value = b"pcm"
+                model = Mock()
+                model.preview.side_effect = [
+                    PreviewResult("[Music]", (), 4.0, "fr"),
+                    PreviewResult("Hallo", (), 4.0, "de"),
+                    PreviewResult("Bonjour", (), 4.0, "fr"),
+                ]
+                stop = Mock()
+                stop.wait.side_effect = [False, False, False, True]
+                stop.is_set.return_value = False
+
+                updates = list(transcribe_live(recorder, model, Settings(language=language), stop))
+
+                self.assertEqual([update.language for update in updates], expected)
+
     def test_live_preview_publishes_the_latest_transcript(self) -> None:
         recorder = Mock()
         recorder.snapshot.return_value = b"pcm"
@@ -37,15 +55,13 @@ class PreviewTests(unittest.TestCase):
         stop = Mock()
         stop.wait.side_effect = [False, False, True]
         stop.is_set.return_value = False
-        languages = queue.SimpleQueue()
 
-        updates = list(transcribe_live(recorder, model, Settings(), stop, languages))
+        updates = list(transcribe_live(recorder, model, Settings(), stop))
 
-        self.assertEqual(updates[0], PreviewText("", "Hello brave", 0.0))
+        self.assertEqual(updates[0], PreviewText("", "Hello brave", 0.0, "de"))
         self.assertEqual(
-            updates[1], PreviewText("Hello", " brave world", 1.0)
+            updates[1], PreviewText("Hello", " brave world", 1.0, "de")
         )
-        self.assertEqual(languages.get_nowait(), "de")
         self.assertEqual(
             [call.args[1].language for call in model.preview.call_args_list],
             ["auto", "de"],
@@ -90,7 +106,7 @@ class PreviewTests(unittest.TestCase):
 
         updates = list(
             transcribe_live(
-                recorder, model, Settings(), stop, queue.SimpleQueue()
+                recorder, model, Settings(), stop
             )
         )
 

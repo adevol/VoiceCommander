@@ -33,7 +33,6 @@ def transcribe_live(
     model: LocalAsrEngine,
     settings: Settings,
     stop: threading.Event,
-    languages: queue.SimpleQueue[str],
 ) -> Iterator[PreviewText]:
     previous: tuple[PreviewSegment, ...] | None = None
     previous_start = 0.0
@@ -57,7 +56,6 @@ def transcribe_live(
         if settings_for_recording.language == "auto" and result.language and result.text:
             if is_speech(result.text):
                 settings_for_recording = replace(settings_for_recording, language=result.language)
-                languages.put(result.language)
         eligible = tuple(
             PreviewSegment(segment.text, segment.end + window_start)
             for segment in result.segments
@@ -85,7 +83,10 @@ def transcribe_live(
             combined = merge_overlapping_text(stable_text, tentative)
             if combined is not None:
                 tentative = combined[len(stable_text) :]
-        update = PreviewText(stable_text, tentative, stable_end)
+        update = PreviewText(
+            stable_text, tentative, stable_end,
+            settings_for_recording.language if settings_for_recording.language != "auto" else None,
+        )
         if update.text:
             yield update
 

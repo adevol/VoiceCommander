@@ -37,7 +37,6 @@ class RecordingSession:
         self._stop = threading.Event()
         self._publish_lock = threading.Lock()
         self._drain_lock = threading.Lock()
-        self._languages: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._preview: PreviewText | None = None
         self._worker: threading.Thread | None = None
         self._timer: threading.Timer | None = None
@@ -73,7 +72,7 @@ class RecordingSession:
             if self._stop.is_set():
                 return
             for update in transcribe_live(
-                self._recorder, self._model.result(), self.settings, self._stop, self._languages
+                self._recorder, self._model.result(), self.settings, self._stop
             ):
                 with self._publish_lock:
                     if self._stop.is_set():
@@ -113,11 +112,8 @@ class RecordingSession:
                     self._worker.join()
                 self._worker = None
             settings = self.settings
-            try:
-                settings = replace(settings, language=self._languages.get_nowait())
-            except queue.Empty:
-                pass
-            self.settings = settings
+            if settings.language == "auto" and self._preview is not None and self._preview.language:
+                settings = replace(settings, language=self._preview.language)
             return settings, self._preview
 
     def finish(

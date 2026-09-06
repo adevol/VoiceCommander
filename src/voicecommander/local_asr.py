@@ -82,6 +82,7 @@ class PreviewText:
     stable: str
     tentative: str
     stable_end: float
+    language: str | None = None
 
     @property
     def text(self) -> str:

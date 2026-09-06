@@ -41,7 +41,7 @@ class RecordingSessionTests(unittest.TestCase):
         preview = PreviewText("Fest", "", 3.0)
         preview_done = threading.Event()
 
-        def transcribe(rec, loaded_model, used_settings, stop, languages):
+        def transcribe(rec, loaded_model, used_settings, stop):
             self.assertIs(rec, recorder)
             self.assertIs(loaded_model, model)
             self.assertIs(used_settings, settings)
@@ -60,11 +60,10 @@ class RecordingSessionTests(unittest.TestCase):
     def test_finish_passes_detected_language_to_final_transcription(self):
         model_future, model = self.loaded_model()
         session, _, _ = self.make_session(model=model_future)
-        preview = PreviewText("Hallo", "", 3.0)
+        preview = PreviewText("Hallo", "", 3.0, "de")
         preview_done = threading.Event()
 
-        def transcribe(recorder, loaded_model, used_settings, stop, languages):
-            languages.put("de")
+        def transcribe(recorder, loaded_model, used_settings, stop):
             yield preview
             preview_done.set()
 
@@ -83,7 +82,7 @@ class RecordingSessionTests(unittest.TestCase):
         session, _, updates = self.make_session(model=model_future)
         entered = threading.Event()
         release = threading.Event()
-        late = PreviewText("too late", "", 4.0)
+        late = PreviewText("too late", "", 4.0, "fr")
 
         def transcribe(*args):
             entered.set()
