@@ -2,8 +2,7 @@
 
 Attributes:
     WHISPER_DEFINITIONS: Quantised multilingual whisper.cpp builds, largest last,
-        with their download hashes and preview capability. WHISPER_MODELS is a
-        tuple-compatible filename/hash view for existing consumers.
+        with their download hashes and preview capability.
     VOCABULARY_LIMIT: Characters accepted in the custom vocabulary.
 """
 
@@ -30,8 +29,6 @@ class WhisperModel:
     preview: bool = True
 
 
-# Canonical model metadata. WHISPER_MODELS below remains a tuple view for
-# existing download and benchmark consumers.
 WHISPER_DEFINITIONS = {
     "tiny": WhisperModel(
         "ggml-tiny-q5_1.bin",
@@ -45,9 +42,6 @@ WHISPER_DEFINITIONS = {
         "ggml-small-q5_1.bin",
         "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
     ),
-}
-WHISPER_MODELS = {
-    name: (model.filename, model.sha256) for name, model in WHISPER_DEFINITIONS.items()
 }
 LOCAL_ASR_MODELS = tuple(WHISPER_DEFINITIONS)
 LOCAL_MODEL_MIGRATIONS = {

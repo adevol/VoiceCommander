@@ -22,7 +22,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
-from .settings import APP_DIR, WHISPER_MODELS, WHISPER_REVISION, Settings
+from .settings import APP_DIR, WHISPER_DEFINITIONS, WHISPER_REVISION, Settings
 
 WHISPER_DIR = APP_DIR / "whisper.cpp"
 WHISPER_RUNTIME_URL = (
@@ -314,13 +314,13 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
         WHISPER_RUNTIME_SHA256,
         ("whisper-server.exe", "whisper.dll", "ggml.dll"),
     )
-    filename, expected_sha256 = WHISPER_MODELS[local_asr_model]
-    model = WHISPER_DIR / filename
+    definition = WHISPER_DEFINITIONS[local_asr_model]
+    model = WHISPER_DIR / definition.filename
     if not model.exists():
         _download(
-            f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/{filename}",
+            f"https://huggingface.co/ggerganov/whisper.cpp/resolve/{WHISPER_REVISION}/{definition.filename}",
             model,
-            expected_sha256,
+            definition.sha256,
         )
     return executable, WHISPER_DIR / "whisper-server.exe", model
 
@@ -444,7 +444,7 @@ def _transcribe_whisper(
 
 
 def load_local_model(local_asr_model: str = "base") -> LocalAsrEngine:
-    if local_asr_model in WHISPER_MODELS:
+    if local_asr_model in WHISPER_DEFINITIONS:
         executable, server, model = _ensure_whisper(local_asr_model)
         logger.info("Loaded multilingual Whisper model %s", model)
         return LocalAsrEngine(executable, server, model)

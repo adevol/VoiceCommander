@@ -24,7 +24,7 @@ from voicecommander.local_asr import (
     load_local_model,
 )
 from voicecommander.pipeline import postprocess_openrouter, transcribe_openrouter
-from voicecommander.settings import WHISPER_MODELS, Settings
+from voicecommander.settings import WHISPER_DEFINITIONS, Settings
 
 
 class LocalAsrTests(unittest.TestCase):
@@ -37,7 +37,7 @@ class LocalAsrTests(unittest.TestCase):
         model_name = os.environ.get("VOICECOMMANDER_INTEGRATION_MODEL", "base")
         executable = WHISPER_DIR / "whisper-cli.exe"
         server_executable = WHISPER_DIR / "whisper-server.exe"
-        model_path = WHISPER_DIR / WHISPER_MODELS[model_name][0]
+        model_path = WHISPER_DIR / WHISPER_DEFINITIONS[model_name].filename
         if not all(path.exists() for path in (audio, executable, server_executable, model_path)):
             self.skipTest("integration audio or installed Whisper files are missing")
         with wave.open(str(audio), "rb") as source:
@@ -331,7 +331,8 @@ class LocalAsrTests(unittest.TestCase):
 
     @patch("voicecommander.local_asr._download")
     def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
-        for name, (filename, expected_sha256) in WHISPER_MODELS.items():
+        for name, definition in WHISPER_DEFINITIONS.items():
+            filename, expected_sha256 = definition.filename, definition.sha256
             with self.subTest(name), tempfile.TemporaryDirectory() as directory:
                 whisper_dir = Path(directory)
                 for runtime_file in (
@@ -353,7 +354,7 @@ class LocalAsrTests(unittest.TestCase):
                 self.assertEqual(destination, whisper_dir / filename)
                 self.assertEqual(sha256, expected_sha256)
                 self.assertIn(f"/{filename}", url)
-        self.assertEqual(WHISPER_MODELS["tiny"][0], "ggml-tiny-q5_1.bin")
+        self.assertEqual(WHISPER_DEFINITIONS["tiny"].filename, "ggml-tiny-q5_1.bin")
 
     @patch("voicecommander.local_asr.subprocess.run")
     def test_whisper_passes_selected_or_automatic_language(self, run: Mock) -> None:
