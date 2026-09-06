@@ -14,7 +14,7 @@ import time
 import unicodedata
 import wave
 import zipfile
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock
@@ -22,7 +22,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
-from .settings import APP_DIR, WHISPER_DEFINITIONS, WHISPER_REVISION, Settings
+from .settings import APP_DIR, WHISPER_DEFINITIONS, WHISPER_REVISION
 
 WHISPER_DIR = APP_DIR / "whisper.cpp"
 WHISPER_RUNTIME_URL = (
@@ -100,18 +100,19 @@ class LocalAsrEngine:
     _closed: bool = field(default=False, init=False, repr=False)
 
     def preview(
-        self, pcm16: bytes, settings: Settings, stop: Event | None = None
+        self, pcm16: bytes, *, language: str = "auto", vocabulary: str = "",
+        stop: Event | None = None,
     ) -> PreviewResult | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
         if not self._preview_lock.acquire(blocking=False):
             return None
         try:
-            return self._decode_pcm(pcm16, settings, stop)
+            return self._decode_pcm(pcm16, language=language, vocabulary=vocabulary, stop=stop)
         finally:
             self._preview_lock.release()
 
     def _decode_pcm(
-        self, pcm16: bytes, settings: Settings, stop: Event | None = None
+        self, pcm16: bytes, *, language: str, vocabulary: str, stop: Event | None = None
     ) -> PreviewResult:
         self._preview_cancel.clear()
         if self._closed or (stop is not None and stop.is_set()):
@@ -123,24 +124,33 @@ class LocalAsrEngine:
         if self._preview_cancel.is_set() or (stop is not None and stop.is_set()):
             self._server.close()
             raise RuntimeError("Whisper preview cancelled")
-        return self._server.transcribe(pcm16, settings)
+        return self._server.transcribe(pcm16, language=language, vocabulary=vocabulary)
 
     def transcribe(
         self,
         path: Path,
-        settings: Settings,
+        *,
+        language: str = "auto",
+        vocabulary: str = "",
+        timeout: float = 1200,
         preview: PreviewText | None = None,
     ) -> str:
+        """Finalize text; timeout limits the CLI fallback, server requests use 30 seconds."""
         if self._closed:
             raise RuntimeError("Local ASR engine is closed")
-        joined = self._finalize_tail(path, settings, preview)
-        return joined or _transcribe_whisper(self.executable, self.model, path, settings)
+        joined = self._finalize_tail(path, preview, language=language, vocabulary=vocabulary)
+        return joined or _transcribe_whisper(
+            self.executable, self.model, path,
+            language=language, vocabulary=vocabulary, timeout=timeout,
+        )
 
     def _finalize_tail(
         self,
         path: Path,
-        settings: Settings,
         preview: PreviewText | None,
+        *,
+        language: str,
+        vocabulary: str,
     ) -> str | None:
         if (
             preview is None
@@ -156,12 +166,9 @@ class LocalAsrEngine:
                 source.setpos(min(source.getnframes(), round(tail_start * SAMPLE_RATE)))
                 tail = source.readframes(source.getnframes())
             tail_prompt = " ".join(preview.stable.split()[-TAIL_PROMPT_WORDS:])
-            tail_settings = replace(
-                settings,
-                vocabulary=" ".join(filter(None, (settings.vocabulary, tail_prompt))),
-            )
+            tail_vocabulary = " ".join(filter(None, (vocabulary, tail_prompt)))
             with self._preview_lock:
-                result = self._decode_pcm(tail, tail_settings)
+                result = self._decode_pcm(tail, language=language, vocabulary=tail_vocabulary)
         except (OSError, EOFError, RuntimeError, wave.Error):
             logger.warning(
                 "Could not finalize from the committed preview; decoding the full file",
@@ -193,8 +200,10 @@ class _WhisperServer:
     process: subprocess.Popen
     url: str
 
-    def transcribe(self, pcm16: bytes, settings: Settings) -> PreviewResult:
-        boundary, body = _preview_request(pcm16, settings)
+    def transcribe(
+        self, pcm16: bytes, *, language: str = "auto", vocabulary: str = ""
+    ) -> PreviewResult:
+        boundary, body = _preview_request(pcm16, language=language, vocabulary=vocabulary)
         request = Request(
             self.url + "/inference",
             data=body,
@@ -325,7 +334,7 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
     return executable, WHISPER_DIR / "whisper-server.exe", model
 
 
-def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
+def _preview_request(pcm16: bytes, *, language: str, vocabulary: str) -> tuple[str, bytes]:
     wav = BytesIO()
     with wave.open(wav, "wb") as output:
         output.setnchannels(CHANNELS)
@@ -336,12 +345,12 @@ def _preview_request(pcm16: bytes, settings: Settings) -> tuple[str, bytes]:
     boundary = f"voicecommander-{os.urandom(12).hex()}"
     fields = {
         "response_format": "verbose_json",
-        "language": _whisper_language(settings.language),
+        "language": _whisper_language(language),
         "temperature": "0",
         "token_timestamps": "false",
     }
-    if settings.vocabulary:
-        fields |= {"prompt": settings.vocabulary, "carry_initial_prompt": "true"}
+    if vocabulary:
+        fields |= {"prompt": vocabulary, "carry_initial_prompt": "true"}
     body = bytearray()
     for name, value in fields.items():
         body.extend(
@@ -402,7 +411,8 @@ def _whisper_language(language: str) -> str:
 
 
 def _transcribe_whisper(
-    executable: Path, model: Path, path: Path, settings: Settings
+    executable: Path, model: Path, path: Path, *,
+    language: str = "auto", vocabulary: str = "", timeout: float = 1200,
 ) -> str:
     output_base = path.with_suffix(path.suffix + ".whisper")
     output_path = Path(str(output_base) + ".txt")
@@ -413,7 +423,7 @@ def _transcribe_whisper(
         "-f",
         str(path),
         "-l",
-        _whisper_language(settings.language),
+        _whisper_language(language),
         "-t",
         str(min(8, os.cpu_count() or 4)),
         "-otxt",
@@ -421,14 +431,14 @@ def _transcribe_whisper(
         str(output_base),
         "-np",
     ]
-    if settings.vocabulary:
-        command += ["--prompt", settings.vocabulary, "--carry-initial-prompt"]
+    if vocabulary:
+        command += ["--prompt", vocabulary, "--carry-initial-prompt"]
     try:
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            timeout=max(300, settings.max_seconds * 4),
+            timeout=timeout,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode:

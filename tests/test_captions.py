@@ -58,7 +58,7 @@ class CaptionsTests(unittest.TestCase):
         stop = threading.Event()
         model = Mock()
 
-        def finish(*_args) -> PreviewResult:
+        def finish(*_args, **_kwargs) -> PreviewResult:
             stop.set()
             return PreviewResult("Hello", (PreviewSegment("Hello", 1.0),), 1.0)
 
@@ -68,7 +68,7 @@ class CaptionsTests(unittest.TestCase):
 
         load.assert_called_once_with("tiny")
         model.preview.assert_called_once_with(
-            b"speech", Settings(caption_asr_model="tiny")
+            b"speech", language="auto", vocabulary="", stop=stop
         )
         model.close.assert_called_once_with()
         self.assertEqual(lines.get_nowait(), "(listening)")

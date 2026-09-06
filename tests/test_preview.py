@@ -63,7 +63,7 @@ class PreviewTests(unittest.TestCase):
             updates[1], PreviewText("Hello", " brave world", 1.0, "de")
         )
         self.assertEqual(
-            [call.args[1].language for call in model.preview.call_args_list],
+            [call.kwargs["language"] for call in model.preview.call_args_list],
             ["auto", "de"],
         )
 

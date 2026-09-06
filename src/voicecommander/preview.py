@@ -5,7 +5,6 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Iterator
-from dataclasses import replace
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH, Recorder
 from .local_asr import (
@@ -38,7 +37,7 @@ def transcribe_live(
     previous_start = 0.0
     stable_text = ""
     stable_end = 0.0
-    settings_for_recording = settings
+    language = settings.language
     while not stop.wait(PREVIEW_INTERVAL):
         window_start = max(0.0, stable_end - CORRECTION_HORIZON)
         if window_start != previous_start:
@@ -50,12 +49,15 @@ def transcribe_live(
             continue
         if stop.is_set():
             break
-        result = model.preview(pcm16, settings_for_recording, stop)
+        result = model.preview(
+            pcm16, language=language,
+            vocabulary=settings.vocabulary, stop=stop,
+        )
         if result is None or stop.is_set():
             continue
-        if settings_for_recording.language == "auto" and result.language and result.text:
+        if language == "auto" and result.language and result.text:
             if is_speech(result.text):
-                settings_for_recording = replace(settings_for_recording, language=result.language)
+                language = result.language
         eligible = tuple(
             PreviewSegment(segment.text, segment.end + window_start)
             for segment in result.segments
@@ -85,7 +87,7 @@ def transcribe_live(
                 tentative = combined[len(stable_text) :]
         update = PreviewText(
             stable_text, tentative, stable_end,
-            settings_for_recording.language if settings_for_recording.language != "auto" else None,
+            language if language != "auto" else None,
         )
         if update.text:
             yield update

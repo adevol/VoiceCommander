@@ -12,7 +12,7 @@ from voicecommander.local_asr import (
     load_local_model,
 )
 from voicecommander.preview import PREVIEW_WINDOW_BYTES, PREVIEW_WINDOW_SECONDS
-from voicecommander.settings import LOCAL_ASR_MODELS, Settings
+from voicecommander.settings import LOCAL_ASR_MODELS
 
 BYTES_PER_SECOND = 16_000 * 2
 FINAL_TAIL_SECONDS = 4
@@ -51,7 +51,6 @@ def main() -> int:
             f"audio must be at least {PREVIEW_WINDOW_SECONDS:g} seconds "
             "to benchmark the production preview window"
         )
-    settings = Settings(local_asr_model=args.model, language=args.language)
 
     model = load_local_model(args.model)
 
@@ -61,22 +60,22 @@ def main() -> int:
     preview_final = None
     try:
         started = perf_counter()
-        preview = model.preview(preview_audio, settings)
+        preview = model.preview(preview_audio, language=args.language)
         first_preview = perf_counter() - started
         if preview is None:
             raise RuntimeError("Preview request was dropped")
         preview_text = preview.text
         for _ in range(args.runs):
             started = perf_counter()
-            model.preview(preview_audio, settings)
+            model.preview(preview_audio, language=args.language)
             preview_timings.append(perf_counter() - started)
         for _ in range(args.runs):
             started = perf_counter()
-            transcript = model.transcribe(args.audio, settings)
+            transcript = model.transcribe(args.audio, language=args.language)
             final_timings.append(perf_counter() - started)
         if duration >= MIN_REUSABLE_PREVIEW_SECONDS + FINAL_TAIL_SECONDS:
             prefix = model.preview(
-                pcm16[: -FINAL_TAIL_SECONDS * BYTES_PER_SECOND], settings
+                pcm16[: -FINAL_TAIL_SECONDS * BYTES_PER_SECOND], language=args.language
             )
             if (
                 prefix is not None
@@ -86,8 +85,8 @@ def main() -> int:
                 started = perf_counter()
                 preview_final = model.transcribe(
                     args.audio,
-                    settings,
-                    PreviewText(prefix.text, "", prefix.segments[-1].end),
+                    language=args.language,
+                    preview=PreviewText(prefix.text, "", prefix.segments[-1].end),
                 )
                 preview_final = perf_counter() - started, preview_final == transcript
     finally:

@@ -13,6 +13,20 @@ from voicecommander.settings import Settings
 
 
 class RecordingSessionTests(unittest.TestCase):
+    def test_recording_limit_sets_the_final_transcription_timeout(self):
+        for seconds, expected in ((10, 300), (300, 1200), (600, 2400)):
+            with self.subTest(seconds=seconds):
+                future, model = self.loaded_model()
+                session, _, _ = self.make_session(
+                    settings=Settings(live_preview=False, max_seconds=seconds), model=future
+                )
+                session.start(Mock())
+                path = session.stop()
+                session.finish("")
+                model.transcribe.assert_called_once_with(
+                    path, language="auto", vocabulary="", timeout=expected, preview=None,
+                )
+
     def make_session(self, *, settings=None, model=None):
         recorder = Mock()
         recorder.stop.return_value = Path("recording.wav")
@@ -55,7 +69,10 @@ class RecordingSessionTests(unittest.TestCase):
             result = session.finish("")
 
         self.assertEqual(result, "final text")
-        model.transcribe.assert_called_once_with(path, settings, preview)
+        model.transcribe.assert_called_once_with(
+            path, language=settings.language, vocabulary=settings.vocabulary,
+            timeout=1200, preview=preview,
+        )
 
     def test_finish_passes_detected_language_to_final_transcription(self):
         model_future, model = self.loaded_model()
@@ -73,9 +90,10 @@ class RecordingSessionTests(unittest.TestCase):
             path = session.stop()
             session.finish("")
 
-        final_settings = model.transcribe.call_args.args[1]
-        self.assertEqual(final_settings.language, "de")
-        model.transcribe.assert_called_once_with(path, final_settings, preview)
+        model.transcribe.assert_called_once_with(
+            path, language="de", vocabulary="", timeout=1200, preview=preview,
+        )
+        self.assertEqual(session.settings.language, "auto")
 
     def test_late_preview_result_is_ignored_after_stop(self):
         model_future, model = self.loaded_model()
@@ -96,7 +114,9 @@ class RecordingSessionTests(unittest.TestCase):
             release.set()
             session.finish("")
 
-        model.transcribe.assert_called_once_with(path, session.settings, None)
+        model.transcribe.assert_called_once_with(
+            path, language="auto", vocabulary="", timeout=1200, preview=None,
+        )
         published = []
         while not updates.empty():
             published.append(updates.get_nowait())
@@ -122,7 +142,7 @@ class RecordingSessionTests(unittest.TestCase):
         session.start(Mock())
         session.stop()
 
-        def transcribe(*args):
+        def transcribe(*args, **kwargs):
             session.close()
             return "raw text"
 
@@ -184,14 +204,11 @@ class RecordingSessionTests(unittest.TestCase):
             second_path = second.stop()
             second.finish("")
 
-        self.assertEqual(
-            model.transcribe.call_args_list[0].args,
-            (first_path, first.settings, preview),
-        )
-        self.assertEqual(
-            model.transcribe.call_args_list[1].args,
-            (second_path, second.settings, None),
-        )
+        self.assertEqual(model.transcribe.call_args_list[0].args, (first_path,))
+        self.assertEqual(model.transcribe.call_args_list[0].kwargs["preview"], preview)
+        self.assertEqual(model.transcribe.call_args_list[1].args, (second_path,))
+        self.assertIsNone(model.transcribe.call_args_list[1].kwargs["preview"])
+        self.assertEqual(model.transcribe.call_args_list[1].kwargs["language"], "auto")
         self.assertEqual(second.settings.language, "auto")
 
 

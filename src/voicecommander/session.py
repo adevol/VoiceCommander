@@ -131,7 +131,10 @@ class RecordingSession:
                 raise CancelledError("Recording session closed")
             if model is None:
                 raise RuntimeError("Local ASR model is not loaded")
-            raw = model.transcribe(self.path, settings, preview)
+            raw = model.transcribe(
+                self.path, language=settings.language, vocabulary=settings.vocabulary,
+                timeout=max(300, settings.max_seconds * 4), preview=preview,
+            )
         else:
             raw = transcribe_openrouter(self.path, settings, api_key)
         if self._closed:

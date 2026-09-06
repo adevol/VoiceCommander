@@ -115,7 +115,9 @@ def _transcribe(
             if peak < SILENCE_PEAK:
                 continue
             try:
-                result = model.preview(pcm16, settings)
+                result = model.preview(
+                    pcm16, language=settings.language, vocabulary=settings.vocabulary, stop=stop
+                )
             except Exception as error:
                 logger.warning("Caption chunk failed: %s", error)
                 continue

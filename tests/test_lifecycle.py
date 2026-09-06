@@ -99,7 +99,7 @@ class LifecycleTests(unittest.TestCase):
 
         def preview():
             try:
-                engine.preview(b"pcm", Settings())
+                engine.preview(b"pcm")
             except RuntimeError as error:
                 errors.append(str(error))
 
@@ -120,7 +120,7 @@ class LifecycleTests(unittest.TestCase):
         server.close.assert_called()
         server.transcribe.assert_not_called()
         with self.assertRaisesRegex(RuntimeError, "cancelled"):
-            engine.preview(b"pcm", Settings())
+            engine.preview(b"pcm")
 
     def test_stopped_preview_does_not_start_a_server(self):
         stop = threading.Event()
@@ -128,5 +128,5 @@ class LifecycleTests(unittest.TestCase):
         engine = LocalAsrEngine(Path("cli"), Path("server"), Path("model"))
         with patch("voicecommander.local_asr._start_whisper_server") as start:
             with self.assertRaisesRegex(RuntimeError, "cancelled"):
-                engine.preview(b"pcm", Settings(), stop)
+                engine.preview(b"pcm", stop=stop)
         start.assert_not_called()

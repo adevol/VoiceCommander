@@ -46,10 +46,9 @@ class LocalAsrTests(unittest.TestCase):
         prefix_seconds = 22
         silence = b"\0" * 16_000 * 2 * prefix_seconds
         final_path = write_wav(silence + pcm16 * 2)
-        settings = Settings(local_asr_model=model_name, language="en-US")
         engine = LocalAsrEngine(executable, server_executable, model_path)
         try:
-            preview = engine.preview(pcm16, settings)
+            preview = engine.preview(pcm16, language="en-US")
             self.assertIsNotNone(preview)
             self.assertTrue(preview.segments)
             process = engine._server.process
@@ -59,8 +58,8 @@ class LocalAsrTests(unittest.TestCase):
             ):
                 final = engine.transcribe(
                     final_path,
-                    settings,
-                    PreviewText(preview.text, "", prefix_seconds + seconds),
+                    language="en-US",
+                    preview=PreviewText(preview.text, "", prefix_seconds + seconds),
                 )
             self.assertIs(engine._server.process, process)
             self.assertGreater(len(final.split()), len(preview.text.split()))
@@ -79,7 +78,9 @@ class LocalAsrTests(unittest.TestCase):
         )
         server = _WhisperServer(Mock(), "http://127.0.0.1:1")
 
-        result = server.transcribe(b"pcm", Settings())
+        result = server.transcribe(
+            b"pcm", language="de-DE", vocabulary="VoiceCommander"
+        )
 
         self.assertEqual(
             result,
@@ -94,6 +95,8 @@ class LocalAsrTests(unittest.TestCase):
             ),
         )
         self.assertIn(b'verbose_json', urlopen.call_args.args[0].data)
+        self.assertIn(b'name="language"\r\n\r\nde\r\n', urlopen.call_args.args[0].data)
+        self.assertIn(b'name="prompt"\r\n\r\nVoiceCommander', urlopen.call_args.args[0].data)
 
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
@@ -113,21 +116,24 @@ class LocalAsrTests(unittest.TestCase):
         server = start_server.return_value
         preview = PreviewResult("Hallo", (PreviewSegment("Hallo", 1.0),), 1.0)
         server.transcribe.return_value = preview
-        settings = Settings(language="de-DE")
-
         engine = load_local_model("base")
         start_server.assert_not_called()
         self.assertEqual(
-            engine.preview(b"partial audio", settings),
+            engine.preview(b"partial audio", language="de-DE"),
             preview,
         )
-        self.assertEqual(engine.transcribe(Path("recording.wav"), settings), "Hello")
+        self.assertEqual(
+            engine.transcribe(Path("recording.wav"), language="de-DE"), "Hello"
+        )
         start_server.assert_called_once_with(
             Path("whisper-server.exe"), Path("model.bin"), engine._preview_cancel
         )
-        server.transcribe.assert_called_once_with(b"partial audio", settings)
+        server.transcribe.assert_called_once_with(
+            b"partial audio", language="de-DE", vocabulary=""
+        )
         transcribe.assert_called_once_with(
-            Path("whisper-cli.exe"), Path("model.bin"), Path("recording.wav"), settings
+            Path("whisper-cli.exe"), Path("model.bin"), Path("recording.wav"),
+            language="de-DE", vocabulary="", timeout=1200,
         )
         engine.close()
         server.close.assert_called_once_with()
@@ -150,11 +156,10 @@ class LocalAsrTests(unittest.TestCase):
             Path("cli.exe"), Path("server.exe"), Path("model.bin")
         )
         engine._server = server
-        settings = Settings(vocabulary="VoiceCommander")
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             text = engine.transcribe(
-                path, settings, PreviewText(prefix, "", 24.0)
+                path, vocabulary="VoiceCommander", preview=PreviewText(prefix, "", 24.0)
             )
         finally:
             path.unlink()
@@ -165,7 +170,7 @@ class LocalAsrTests(unittest.TestCase):
         tail = server.transcribe.call_args.args[0]
         self.assertEqual(len(tail), 16_000 * 2 * 4)
         self.assertEqual(
-            server.transcribe.call_args.args[1].vocabulary,
+            server.transcribe.call_args.kwargs["vocabulary"],
             f"VoiceCommander {' '.join(prefix_words[-50:])}",
         )
 
@@ -183,14 +188,15 @@ class LocalAsrTests(unittest.TestCase):
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             text = engine.transcribe(
-                path, Settings(), PreviewText("Hello brave new", "", 24.0)
+                path, preview=PreviewText("Hello brave new", "", 24.0)
             )
         finally:
             path.unlink()
 
         self.assertEqual(text, "full fallback")
         transcribe.assert_called_once_with(
-            Path("cli.exe"), Path("model.bin"), path, Settings()
+            Path("cli.exe"), Path("model.bin"), path,
+            language="auto", vocabulary="", timeout=1200,
         )
         start_server.assert_not_called()
 
@@ -212,7 +218,7 @@ class LocalAsrTests(unittest.TestCase):
         path = write_wav(b"\0\0" * 16_000 * 26)
         try:
             text = engine.transcribe(
-                path, Settings(), PreviewText("Hello brave new", "", 24.0)
+                path, preview=PreviewText("Hello brave new", "", 24.0)
             )
         finally:
             path.unlink()
@@ -230,7 +236,7 @@ class LocalAsrTests(unittest.TestCase):
         engine._server = server
         path = write_wav(b"\0\0" * 16_000 * 6)
         try:
-            text = engine.transcribe(path, Settings(), PreviewText("Hello", "", 4.0))
+            text = engine.transcribe(path, preview=PreviewText("Hello", "", 4.0))
         finally:
             path.unlink()
 
@@ -253,7 +259,7 @@ class LocalAsrTests(unittest.TestCase):
         try:
             with self.assertLogs("voicecommander.local_asr", level="WARNING"):
                 text = engine.transcribe(
-                    path, Settings(), PreviewText("Long stable prefix", "", 24.0)
+                    path, preview=PreviewText("Long stable prefix", "", 24.0)
                 )
         finally:
             path.unlink()
@@ -280,7 +286,7 @@ class LocalAsrTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "programming error"),
             ):
                 engine.transcribe(
-                    path, Settings(), PreviewText("Long stable prefix", "", 24.0)
+                    path, preview=PreviewText("Long stable prefix", "", 24.0)
                 )
         finally:
             path.unlink()
@@ -298,7 +304,7 @@ class LocalAsrTests(unittest.TestCase):
 
         preview = PreviewResult("first", (PreviewSegment("first", 1.0),), 1.0)
 
-        def transcribe(data: bytes, settings: Settings) -> PreviewResult:
+        def transcribe(data: bytes, **kwargs) -> PreviewResult:
             entered.set()
             release.wait(1)
             return preview
@@ -307,12 +313,12 @@ class LocalAsrTests(unittest.TestCase):
         engine = load_local_model("base")
         results = []
         worker = threading.Thread(
-            target=lambda: results.append(engine.preview(b"first", Settings()))
+            target=lambda: results.append(engine.preview(b"first"))
         )
         worker.start()
         self.assertTrue(entered.wait(1))
 
-        self.assertIsNone(engine.preview(b"newest", Settings()))
+        self.assertIsNone(engine.preview(b"newest"))
 
         release.set()
         worker.join(1)
@@ -374,9 +380,23 @@ class LocalAsrTests(unittest.TestCase):
             ):
                 with self.subTest(language):
                     transcript.write_text(text, encoding="utf-8")
-                    self.assertEqual(model(path, Settings(language=language)), text)
+                    self.assertEqual(model(path, language=language), text)
                     command = run.call_args.args[0]
                     self.assertEqual(command[command.index("-l") + 1], expected)
+
+    @patch("voicecommander.local_asr.subprocess.run")
+    def test_whisper_forwards_explicit_subprocess_timeout(self, run: Mock) -> None:
+        run.return_value = Mock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recording.wav"
+            path.touch()
+            Path(str(path) + ".whisper.txt").write_text("Hello", encoding="utf-8")
+
+            engine = LocalAsrEngine(Path("whisper-cli.exe"), Path("server.exe"), Path("model.bin"))
+            result = engine.transcribe(path, timeout=37)
+
+        self.assertEqual(result, "Hello")
+        self.assertEqual(run.call_args.kwargs["timeout"], 37)
 
     @patch("voicecommander.pipeline._openrouter")
     @patch("voicecommander.local_asr.subprocess.run")
@@ -390,7 +410,7 @@ class LocalAsrTests(unittest.TestCase):
             transcript = Path(str(path) + ".whisper.txt")
             transcript.write_text("Kubernetes", encoding="utf-8")
             model = partial(_transcribe_whisper, Path("w.exe"), Path("m.bin"))
-            model(path, settings)
+            model(path, vocabulary=settings.vocabulary)
             transcribe_openrouter(path, settings, "secret")
             postprocess_openrouter("Raw", settings, "secret")
 
@@ -406,7 +426,7 @@ class LocalAsrTests(unittest.TestCase):
                 self.assertIn("Kubernetes, VoiceCommander", str(call.args[1]["messages"]))
 
             transcript.write_text("Kubernetes", encoding="utf-8")
-            model(path, Settings())
+            model(path)
         self.assertNotIn("--prompt", run.call_args.args[0])
 
 
