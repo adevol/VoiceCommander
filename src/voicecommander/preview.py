@@ -103,15 +103,22 @@ class PreviewOverlay:
         self.root.attributes("-topmost", True)
         self.root.configure(background="#17191f")
         self.root.protocol("WM_DELETE_WINDOW", self.root.withdraw)
-        self.text = tk.Label(
+        self.text = tk.Text(
             self.root,
             background="#17191f",
             foreground="#f4f4f5",
             font=("Segoe UI", 13),
-            justify="left",
-            wraplength=720,
+            wrap="word",
+            width=72,
+            height=1,
+            borderwidth=0,
+            highlightthickness=0,
+            takefocus=False,
+            state="disabled",
         )
+        self.text.tag_configure("tentative", foreground="#a1a1aa")
         self.text.pack(padx=20, pady=14)
+        self.text.bind("<Configure>", lambda event: self._resize())
 
     def pump(self, updates: queue.SimpleQueue[PreviewText | str | None]) -> None:
         latest: PreviewText | str | None = None
@@ -127,16 +134,32 @@ class PreviewOverlay:
         if latest is None:
             self.root.withdraw()
             return
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
         if isinstance(latest, PreviewText):
-            latest = latest.text
-        self.text.configure(text=latest)
+            self.text.insert("end", latest.stable)
+            self.text.insert("end", latest.tentative, "tentative")
+        else:
+            self.text.insert("end", latest)
+        self.text.configure(state="disabled")
+        self.root.deiconify()
+        self._resize()
+        self.root.lift()
+
+    def _resize(self) -> None:
+        # Keep long dictations compact and the changing phrase in view.
+        # The first Configure event supplies the width needed for word wrapping.
+        lines = (
+            self.text.count("1.0", "end-1c", "update", "displaylines")
+            if self.text.winfo_width() > 1 else 0
+        )
+        self.text.configure(height=min(8, (lines or 0) + 1))
         self.root.update_idletasks()
-        width = min(760, max(260, self.text.winfo_reqwidth() + 40))
+        width = self.text.winfo_reqwidth() + 40
         height = self.text.winfo_reqheight() + 28
         x = (self.root.winfo_screenwidth() - width) // 2
         self.root.geometry(f"{width}x{height}+{x}+28")
-        self.root.deiconify()
-        self.root.lift()
+        self.text.see("end")
 
     def close(self) -> None:
         self.root.destroy()

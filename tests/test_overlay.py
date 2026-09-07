@@ -13,7 +13,9 @@ def _overlay():
     overlay.root.winfo_screenwidth.return_value = 1000
     overlay.text = Mock()
     overlay.text.winfo_reqwidth.return_value = 100
+    overlay.text.winfo_width.return_value = 100
     overlay.text.winfo_reqheight.return_value = 20
+    overlay.text.count.return_value = 0
     return overlay
 
 
@@ -21,8 +23,10 @@ class PreviewOverlayTests(unittest.TestCase):
     def test_preview_overlay_consumes_worker_updates(self) -> None:
         tkinter = Mock()
         tkinter.Tk.return_value.winfo_screenwidth.return_value = 1920
-        tkinter.Label.return_value.winfo_reqwidth.return_value = 300
-        tkinter.Label.return_value.winfo_reqheight.return_value = 40
+        tkinter.Text.return_value.winfo_reqwidth.return_value = 300
+        tkinter.Text.return_value.winfo_width.return_value = 300
+        tkinter.Text.return_value.winfo_reqheight.return_value = 40
+        tkinter.Text.return_value.count.return_value = 0
         updates = queue.SimpleQueue()
         updates.put(PreviewText("Hello", " world", 1.0))
 
@@ -30,7 +34,13 @@ class PreviewOverlayTests(unittest.TestCase):
             overlay = PreviewOverlay()
             overlay.pump(updates)
 
-        tkinter.Label.return_value.configure.assert_called_once_with(text="Hello world")
+        text = tkinter.Text.return_value
+        self.assertEqual(
+            [call.args for call in text.insert.call_args_list],
+            [("end", "Hello"), ("end", " world", "tentative")],
+        )
+        text.tag_configure.assert_called_once_with("tentative", foreground="#a1a1aa")
+        text.configure.assert_any_call(state="disabled")
         tkinter.Tk.return_value.deiconify.assert_called_once()
         tkinter.Tk.return_value.update.assert_not_called()
 
@@ -42,7 +52,8 @@ class PreviewOverlayTests(unittest.TestCase):
 
         overlay.pump(updates)
 
-        overlay.text.configure.assert_called_once_with(text="latest")
+        overlay.text.insert.assert_called_once_with("end", "latest")
+        overlay.text.delete.assert_called_once_with("1.0", "end")
         overlay.root.deiconify.assert_called_once_with()
         overlay.root.lift.assert_called_once_with()
 
@@ -77,7 +88,27 @@ class PreviewOverlayTests(unittest.TestCase):
 
         overlay.root.withdraw.assert_called_once_with()
         overlay.root.deiconify.assert_called_once_with()
-        overlay.text.configure.assert_called_once_with(text="new text")
+        overlay.text.insert.assert_called_once_with("end", "new text")
+
+    def test_long_preview_keeps_the_changing_phrase_visible(self):
+        overlay = _overlay()
+        overlay.text.count.return_value = 30
+        updates = queue.SimpleQueue()
+        updates.put(PreviewText("Long confirmed text", " changing phrase", 10.0))
+
+        overlay.pump(updates)
+
+        overlay.text.configure.assert_any_call(height=8)
+        overlay.text.see.assert_called_once_with("end")
+
+    def test_initial_layout_waits_for_a_real_width_before_counting_lines(self):
+        overlay = _overlay()
+        overlay.text.winfo_width.return_value = 1
+
+        overlay._resize()
+
+        overlay.text.count.assert_not_called()
+        overlay.text.configure.assert_called_once_with(height=1)
 
 
 if __name__ == "__main__":
