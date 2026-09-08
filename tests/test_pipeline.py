@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from io import BytesIO
+import json
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, call, patch
-from urllib.error import HTTPError
+
+import httpx
+from openrouter import OpenRouter
 
 from voicecommander.pipeline import (
     _openrouter,
@@ -18,6 +21,31 @@ from voicecommander.settings import Settings
 
 
 class PipelineTests(unittest.TestCase):
+    @contextmanager
+    def cloud(self, handler):
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            return handler(request)
+
+        with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+            with patch(
+                "voicecommander.pipeline.OpenRouter",
+                side_effect=lambda **kwargs: OpenRouter(client=client, **kwargs),
+            ):
+                yield requests
+
+    @staticmethod
+    def stream_event(content=None, finish_reason=None, **extra):
+        chunk = {
+            "id": "test", "model": "test-model", "created": 0,
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": content} if content is not None else {},
+                         "finish_reason": finish_reason}],
+        } | extra
+        return f"data: {json.dumps(chunk)}\n\n".encode()
+
     def test_refinement_receives_only_the_final_transcript(self) -> None:
         settings = Settings(postprocess_strength=50)
         with patch(
@@ -43,26 +71,28 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result, "raw transcript")
 
     @patch("voicecommander.pipeline.monotonic", side_effect=[0.0, 0.1, 0.2])
-    @patch("voicecommander.pipeline.urlopen")
     def test_postprocessing_stream_accumulates_text(
-        self, urlopen: Mock, monotonic: Mock
+        self, monotonic: Mock
     ) -> None:
-        urlopen.return_value = BytesIO(
-            b": OPENROUTER PROCESSING\n\n"
-            b'data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n'
-            b'data: {"choices":[{"delta":{"content":"world"}}]}\n\n'
-            b"data: [DONE]\n\n"
+        response = httpx.Response(
+            200, headers={"Content-Type": "text/event-stream"},
+            content=b": OPENROUTER PROCESSING\n\n"
+            + self.stream_event("Hello ") + self.stream_event("world")
+            + self.stream_event(finish_reason="stop") + b"data: [DONE]\n\n",
         )
         updates = []
 
-        result = postprocess_openrouter_stream(
-            "Raw", Settings(), "secret", updates.append
-        )
+        with self.cloud(lambda request: response) as requests:
+            result = postprocess_openrouter_stream(
+                "Raw", Settings(), "secret", updates.append
+            )
 
         self.assertEqual(result, "Hello world")
         self.assertEqual(updates, ["Hello ", "Hello world"])
-        request = urlopen.call_args.args[0]
-        self.assertIn(b'"stream": true', request.data)
+        payload = json.loads(requests[0].content)
+        self.assertTrue(payload["stream"])
+        self.assertEqual(payload["provider"], {"data_collection": "deny"})
+        self.assertTrue(response.is_closed)
 
     @patch("voicecommander.pipeline.postprocess_openrouter", return_value="Edited")
     @patch(
@@ -90,7 +120,7 @@ class PipelineTests(unittest.TestCase):
 
     @patch("voicecommander.pipeline._openrouter")
     def test_postprocessing_controls_are_sent_in_the_prompt(self, openrouter: Mock) -> None:
-        openrouter.return_value = {"choices": [{"message": {"content": "Edited"}}]}
+        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="Edited"))])
         settings = Settings(
             postprocess_style="professional",
             postprocess_strength=75,
@@ -106,7 +136,7 @@ class PipelineTests(unittest.TestCase):
 
     @patch("voicecommander.pipeline._openrouter")
     def test_markdown_mode_requests_structure_and_latex(self, openrouter: Mock) -> None:
-        openrouter.return_value = {"choices": [{"message": {"content": "## Result"}}]}
+        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="## Result"))])
 
         result = postprocess_openrouter("Describe a heading", Settings(), "secret", markdown=True)
 
@@ -154,7 +184,7 @@ class PipelineTests(unittest.TestCase):
 
     @patch("voicecommander.pipeline._openrouter")
     def test_openrouter_transcription_sends_audio_to_a_chat_model(self, openrouter: Mock) -> None:
-        openrouter.return_value = {"choices": [{"message": {"content": "Transcript"}}]}
+        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="Transcript"))])
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
             path.write_bytes(b"RIFF")
@@ -180,7 +210,7 @@ class PipelineTests(unittest.TestCase):
     def test_openrouter_transcription_can_detect_language_automatically(
         self, openrouter: Mock
     ) -> None:
-        openrouter.return_value = {"choices": [{"message": {"content": "Bonjour"}}]}
+        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="Bonjour"))])
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
             path.write_bytes(b"RIFF")
@@ -191,17 +221,19 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Detect the spoken language", instruction)
         self.assertNotIn("auto", instruction.casefold())
 
-    @patch("voicecommander.pipeline.urlopen")
-    def test_connection_reset_is_retried_then_reported_cleanly(self, urlopen: Mock) -> None:
-        urlopen.side_effect = ConnectionResetError(10054, "forcibly closed")
+    def test_connection_reset_is_retried_then_reported_cleanly(self) -> None:
+        def reset(request):
+            raise httpx.ReadError("forcibly closed", request=request)
+
         with (
+            self.cloud(reset) as requests,
             self.assertRaisesRegex(RuntimeError, "OpenRouter could not be reached"),
             self.assertLogs("voicecommander.pipeline", level="WARNING"),
         ):
-            _openrouter("secret", {})
-        self.assertEqual(urlopen.call_count, 2)
+            _openrouter("secret", {"messages": []})
+        self.assertEqual(len(requests), 2)
         self.assertEqual(
-            urlopen.call_args.args[0].full_url,
+            str(requests[0].url),
             "https://openrouter.ai/api/v1/chat/completions",
         )
 
@@ -218,13 +250,66 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result, "raw transcript")
         postprocess.assert_not_called()
 
-    @patch("voicecommander.pipeline.urlopen")
-    def test_openrouter_error_includes_response_detail(self, urlopen: Mock) -> None:
-        urlopen.side_effect = HTTPError(
-            "https://openrouter.ai", 400, "Bad Request", {}, BytesIO(b"invalid model")
-        )
-        with self.assertRaisesRegex(RuntimeError, "HTTP 400: invalid model"):
-            _openrouter("secret", {})
+    def test_openrouter_error_includes_response_detail(self) -> None:
+        for status in (400, 500):
+            with (
+                self.subTest(status=status),
+                self.cloud(lambda request: httpx.Response(status, text="invalid model")) as requests,
+                self.assertRaisesRegex(RuntimeError, f"HTTP {status}: invalid model"),
+            ):
+                _openrouter("secret", {"messages": []})
+            self.assertEqual(len(requests), 1)
+
+    def test_sdk_preserves_audio_model_and_privacy_and_retries_connection_failure(self) -> None:
+        def respond(request):
+            if len(requests) == 1:
+                raise httpx.ConnectError("connection failed", request=request)
+            return httpx.Response(200, json={
+                "id": "test", "model": "google/test-model", "created": 0,
+                "object": "chat.completion", "system_fingerprint": None,
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant", "content": " Bonjour "}}],
+            })
+
+        with tempfile.TemporaryDirectory() as directory, self.cloud(respond) as requests:
+            path = Path(directory) / "audio.wav"
+            path.write_bytes(b"RIFF")
+            with self.assertLogs("voicecommander.pipeline", level="WARNING"):
+                result = transcribe_openrouter(
+                    path, Settings(openrouter_asr_model="google/test-model"), "secret"
+                )
+        self.assertEqual(result, "Bonjour")
+        self.assertEqual(len(requests), 2)
+        payload = json.loads(requests[-1].content)
+        self.assertEqual(payload["model"], "google/test-model")
+        self.assertEqual(payload["provider"], {"data_collection": "deny"})
+        self.assertEqual(payload["messages"][0]["content"][1]["input_audio"],
+                         {"data": "UklGRg==", "format": "wav"})
+        self.assertEqual(requests[-1].headers["Authorization"], "Bearer secret")
+        self.assertEqual(requests[-1].extensions["timeout"]["read"], 300)
+
+    def test_incomplete_invalid_and_failed_streams_are_rejected(self) -> None:
+        for body, message in (
+            (self.stream_event("Partial"), "before completion"),
+            (self.stream_event("Partial") + b"data: [DONE]\n\n", "before completion"),
+            (self.stream_event(finish_reason="stop"), "empty"),
+            (self.stream_event("Partial", finish_reason="error"), "stream failed"),
+            (b'data: {"choices": "invalid"}\n\n', "invalid response"),
+            (self.stream_event(error={"code": 500, "message": "provider failed"}), "provider failed"),
+        ):
+            response = httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=body)
+            with (
+                self.subTest(body=body), self.cloud(lambda request: response),
+                self.assertRaisesRegex(RuntimeError, message),
+            ):
+                postprocess_openrouter_stream("Raw", Settings(), "secret", Mock())
+            self.assertTrue(response.is_closed)
+
+    def test_missing_api_key_does_not_make_a_request(self) -> None:
+        with patch("voicecommander.pipeline.OpenRouter") as client:
+            with self.assertRaisesRegex(RuntimeError, "no API key"):
+                _openrouter("", {"messages": []})
+        client.assert_not_called()
 
 
 if __name__ == "__main__":

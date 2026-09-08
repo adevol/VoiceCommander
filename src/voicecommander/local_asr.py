@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import shutil
@@ -18,8 +17,9 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from threading import Event, Lock
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
+
+import httpx
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH
 from .settings import APP_DIR, WHISPER_DEFINITIONS, WHISPER_REVISION
@@ -203,22 +203,20 @@ class _WhisperServer:
     def transcribe(
         self, pcm16: bytes, *, language: str = "auto", vocabulary: str = ""
     ) -> PreviewResult:
-        boundary, body = _preview_request(pcm16, language=language, vocabulary=vocabulary)
-        request = Request(
-            self.url + "/inference",
-            data=body,
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            method="POST",
-        )
+        fields, wav = _preview_request(pcm16, language=language, vocabulary=vocabulary)
         try:
-            with urlopen(request, timeout=30) as response:
-                result = json.load(response)
-        except HTTPError as error:
-            detail = error.read(200).decode("utf-8", errors="replace").strip()
+            response = httpx.post(
+                self.url + "/inference", data=fields,
+                files={"file": ("preview.wav", wav, "audio/wav")},
+                timeout=30, trust_env=False,
+            )
+            result = response.raise_for_status().json()
+        except httpx.HTTPStatusError as error:
+            detail = error.response.text[:200].strip()
             raise RuntimeError(
-                f"Whisper preview returned HTTP {error.code}{f': {detail}' if detail else ''}"
+                f"Whisper preview returned HTTP {error.response.status_code}: {detail}"
             ) from error
-        except (OSError, json.JSONDecodeError) as error:
+        except (httpx.TransportError, ValueError) as error:
             raise RuntimeError(f"Whisper preview failed: {error}") from error
         if (
             not isinstance(result, dict)
@@ -334,7 +332,7 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
     return executable, WHISPER_DIR / "whisper-server.exe", model
 
 
-def _preview_request(pcm16: bytes, *, language: str, vocabulary: str) -> tuple[str, bytes]:
+def _preview_request(pcm16: bytes, *, language: str, vocabulary: str) -> tuple[dict[str, str], bytes]:
     wav = BytesIO()
     with wave.open(wav, "wb") as output:
         output.setnchannels(CHANNELS)
@@ -342,7 +340,6 @@ def _preview_request(pcm16: bytes, *, language: str, vocabulary: str) -> tuple[s
         output.setframerate(SAMPLE_RATE)
         output.writeframes(pcm16)
 
-    boundary = f"voicecommander-{os.urandom(12).hex()}"
     fields = {
         "response_format": "verbose_json",
         "language": _whisper_language(language),
@@ -351,19 +348,7 @@ def _preview_request(pcm16: bytes, *, language: str, vocabulary: str) -> tuple[s
     }
     if vocabulary:
         fields |= {"prompt": vocabulary, "carry_initial_prompt": "true"}
-    body = bytearray()
-    for name, value in fields.items():
-        body.extend(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n'
-            f"{value}\r\n".encode()
-        )
-    body.extend(
-        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
-        'filename="preview.wav"\r\nContent-Type: audio/wav\r\n\r\n'.encode()
-    )
-    body.extend(wav.getvalue())
-    body.extend(f"\r\n--{boundary}--\r\n".encode())
-    return boundary, bytes(body)
+    return fields, wav.getvalue()
 
 
 def _start_whisper_server(executable: Path, model: Path, cancel: Event) -> _WhisperServer:

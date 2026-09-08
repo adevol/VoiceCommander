@@ -1,56 +1,53 @@
 from __future__ import annotations
 
 import base64
-import json
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 from typing import Any, Callable
-from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+
+import httpx
+from openrouter import OpenRouter
+from openrouter.components import ChatResult
+from openrouter.errors import OpenRouterError, ResponseValidationError
 
 from .prompts import postprocess_prompt
 from .settings import Settings
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1"
 logger = logging.getLogger(__name__)
 
 
-def _openrouter_request(api_key: str, payload: dict[str, Any]) -> Request:
+@contextmanager
+def _openrouter_client(api_key: str):
     if not api_key:
         raise RuntimeError("OpenRouter is selected but no API key is configured")
-    return Request(
-        f"{OPENROUTER_URL}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-
-
-def _openrouter(api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    request = _openrouter_request(api_key, payload)
-    last: OSError | None = None
-    for _ in range(2):
-        try:
-            with urlopen(request, timeout=300) as response:
-                return json.load(response)
-        except HTTPError as error:
-            detail = error.read(200).decode("utf-8", errors="replace").strip()
-            message = f"OpenRouter returned HTTP {error.code}{f': {detail}' if detail else ''}"
-            logger.error(message)
-            raise RuntimeError(message) from error
-        except OSError as error:
-            last = error
-            logger.warning("OpenRouter connection failed: %s", error)
-    logger.error("OpenRouter request failed twice: %s", last)
-    raise RuntimeError(f"OpenRouter could not be reached: {last}") from last
-
-
-def _message_text(response: dict[str, Any], what: str) -> str:
     try:
-        text = response["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, TypeError, AttributeError) as error:
-        raise RuntimeError(f"OpenRouter returned an invalid {what} response") from error
+        with OpenRouter(api_key=api_key, timeout_ms=300_000, retry_config=None) as client:
+            yield client
+    except ResponseValidationError as error:
+        raise RuntimeError("OpenRouter returned an invalid response") from error
+    except OpenRouterError as error:
+        detail = error.body[:200].strip()
+        raise RuntimeError(f"OpenRouter returned HTTP {error.status_code}: {detail}") from error
+    except httpx.TransportError as error:
+        raise RuntimeError(f"OpenRouter could not be reached: {error}") from error
+
+
+def _openrouter(api_key: str, payload: dict[str, Any]) -> ChatResult:
+    with _openrouter_client(api_key) as client:
+        for attempt in range(2):
+            try:
+                return client.chat.send(**payload, stream=False)
+            except httpx.TransportError as error:
+                logger.warning("OpenRouter connection failed: %s", error)
+                if attempt:
+                    raise
+
+
+def _message_text(response: ChatResult, what: str) -> str:
+    content = response.choices[0].message.content if response.choices else None
+    text = content.strip() if isinstance(content, str) else ""
     if not text:
         raise RuntimeError(f"OpenRouter returned an empty {what}")
     return text
@@ -128,51 +125,32 @@ def postprocess_openrouter_stream(
     on_update: Callable[[str], None],
     markdown: bool = False,
 ) -> str:
-    payload = _postprocess_payload(text, settings, markdown) | {"stream": True}
-    request = _openrouter_request(api_key, payload)
+    payload = _postprocess_payload(text, settings, markdown)
     result = ""
     emitted = ""
     last_update = monotonic()
     done = False
-    try:
-        with urlopen(request, timeout=300) as response:
-            for raw_line in response:
-                line = raw_line.decode("utf-8").strip()
-                if not line.startswith("data: "):
+    with _openrouter_client(api_key) as client:
+        with client.chat.send(**payload, stream=True) as stream:
+            for chunk in stream:
+                if chunk.error:
+                    raise RuntimeError(f"OpenRouter stream failed: {chunk.error.message}")
+                if not chunk.choices:
                     continue
-                data = line[6:]
-                if data == "[DONE]":
-                    done = True
-                    break
-                chunk = json.loads(data)
-                if not isinstance(chunk, dict):
-                    raise RuntimeError("OpenRouter returned an invalid stream event")
-                if chunk.get("error"):
-                    raise RuntimeError(f"OpenRouter stream failed: {chunk['error']}")
-                choices = chunk.get("choices", [])
-                if not choices:
-                    continue
-                try:
-                    content = choices[0]["delta"].get("content")
-                except (KeyError, TypeError, AttributeError) as error:
-                    raise RuntimeError("OpenRouter returned an invalid stream event") from error
-                if content is None:
-                    continue
+                choice = chunk.choices[0]
+                if choice.finish_reason == "error":
+                    raise RuntimeError("OpenRouter stream failed")
+                # The SDK consumes [DONE]; require the model's completion event.
+                done = done or choice.finish_reason is not None
+                content = choice.delta.content
                 if not isinstance(content, str):
-                    raise RuntimeError("OpenRouter returned an invalid stream event")
+                    continue
                 result += content
                 now = monotonic()
                 if now - last_update >= 0.05:
                     on_update(result)
                     emitted = result
                     last_update = now
-    except HTTPError as error:
-        detail = error.read(200).decode("utf-8", errors="replace").strip()
-        raise RuntimeError(
-            f"OpenRouter returned HTTP {error.code}{f': {detail}' if detail else ''}"
-        ) from error
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise RuntimeError(f"OpenRouter stream failed: {error}") from error
     if not done:
         raise RuntimeError("OpenRouter stream ended before completion")
     result = result.strip()

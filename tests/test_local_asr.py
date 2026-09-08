@@ -10,6 +10,8 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
+import httpx
+
 from voicecommander.audio import write_wav
 from voicecommander.local_asr import (
     LocalAsrEngine,
@@ -68,10 +70,11 @@ class LocalAsrTests(unittest.TestCase):
             final_path.unlink()
         self.assertIsNotNone(process.poll())
 
-    @patch("voicecommander.local_asr.urlopen")
-    def test_preview_server_parses_timestamped_results(self, urlopen: Mock) -> None:
-        urlopen.return_value = BytesIO(
-            b'{"text":"Hello world","duration":3.0,"segments":'
+    @patch("voicecommander.local_asr.httpx.post")
+    def test_preview_server_parses_timestamped_results(self, post: Mock) -> None:
+        post.return_value = httpx.Response(
+            200, request=httpx.Request("POST", "http://127.0.0.1:1/inference"),
+            content=b'{"text":"Hello world","duration":3.0,"segments":'
             b'[{"text":"Hello","start":0.0,"end":1.0},'
             b'{"text":" world","start":1.0,"end":2.5}],'
             b'"language_probabilities":{"en":0.1,"de":0.9}}'
@@ -79,7 +82,7 @@ class LocalAsrTests(unittest.TestCase):
         server = _WhisperServer(Mock(), "http://127.0.0.1:1")
 
         result = server.transcribe(
-            b"pcm", language="de-DE", vocabulary="VoiceCommander"
+            b"pcm\0", language="de-DE", vocabulary="VoiceCommander"
         )
 
         self.assertEqual(
@@ -94,9 +97,34 @@ class LocalAsrTests(unittest.TestCase):
                 "de",
             ),
         )
-        self.assertIn(b'verbose_json', urlopen.call_args.args[0].data)
-        self.assertIn(b'name="language"\r\n\r\nde\r\n', urlopen.call_args.args[0].data)
-        self.assertIn(b'name="prompt"\r\n\r\nVoiceCommander', urlopen.call_args.args[0].data)
+        fields = post.call_args.kwargs["data"]
+        self.assertEqual(fields["response_format"], "verbose_json")
+        self.assertEqual(fields["language"], "de")
+        self.assertEqual(fields["prompt"], "VoiceCommander")
+        self.assertEqual(fields["carry_initial_prompt"], "true")
+        filename, data, mime = post.call_args.kwargs["files"]["file"]
+        self.assertEqual((filename, mime), ("preview.wav", "audio/wav"))
+        with wave.open(BytesIO(data), "rb") as wav:
+            self.assertEqual((wav.getframerate(), wav.getnchannels(), wav.getsampwidth()), (16000, 1, 2))
+            self.assertEqual(wav.readframes(wav.getnframes()), b"pcm\0")
+        self.assertFalse(post.call_args.kwargs["trust_env"])
+        self.assertEqual(post.call_args.kwargs["timeout"], 30)
+
+    @patch("voicecommander.local_asr.httpx.post")
+    def test_preview_http_failures_remain_runtime_errors(self, post: Mock) -> None:
+        server = _WhisperServer(Mock(), "http://127.0.0.1:1")
+        for status, content, message in (
+            (500, b"decoder failed", "HTTP 500: decoder failed"),
+            (200, b"not JSON", "Whisper preview failed"),
+        ):
+            post.return_value = httpx.Response(
+                status, content=content, request=httpx.Request("POST", server.url)
+            )
+            with self.subTest(status=status), self.assertRaisesRegex(RuntimeError, message):
+                server.transcribe(b"pcm", language="auto", vocabulary="")
+        post.side_effect = httpx.ReadTimeout("timed out")
+        with self.assertRaisesRegex(RuntimeError, "Whisper preview failed"):
+            server.transcribe(b"pcm", language="auto", vocabulary="")
 
     def test_unknown_local_model_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "Unsupported local ASR model: nemotron"):
@@ -402,7 +430,7 @@ class LocalAsrTests(unittest.TestCase):
     @patch("voicecommander.local_asr.subprocess.run")
     def test_custom_vocabulary_reaches_supported_models(self, run: Mock, openrouter: Mock) -> None:
         run.return_value = Mock(returncode=0, stderr="")
-        openrouter.return_value = {"choices": [{"message": {"content": "Text"}}]}
+        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="Text"))])
         settings = Settings(vocabulary="Kubernetes, VoiceCommander", postprocess_strength=50)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
