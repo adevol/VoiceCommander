@@ -67,9 +67,7 @@ class CaptionsTests(unittest.TestCase):
             _transcribe(chunks, lines, Settings(caption_asr_model="tiny"), stop)
 
         load.assert_called_once_with("tiny")
-        model.preview.assert_called_once_with(
-            b"speech", language="auto", vocabulary="", stop=stop
-        )
+        model.preview.assert_called_once_with(b"speech", language="auto", vocabulary="", stop=stop)
         model.close.assert_called_once_with()
         self.assertEqual(lines.get_nowait(), "(listening)")
         self.assertEqual(lines.get_nowait(), "Hello")

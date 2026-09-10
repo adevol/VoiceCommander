@@ -72,9 +72,7 @@ def _capture(chunks: queue.Queue, lines: queue.Queue, stop: threading.Event) -> 
                 blocks_recorded += 1
                 if len(buffered) == window_blocks and blocks_recorded % step_blocks == 0:
                     samples = numpy.concatenate(buffered).mean(axis=1)
-                    pcm16 = (
-                        numpy.clip(samples, -1, 1) * 32767
-                    ).astype(numpy.int16).tobytes()
+                    pcm16 = (numpy.clip(samples, -1, 1) * 32767).astype(numpy.int16).tobytes()
                     _put_latest(
                         chunks,
                         (pcm16, float(numpy.abs(samples).max())),

@@ -2,6 +2,8 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 uv sync --group build
+uv run ruff check .
+uv run ruff format --check .
 uv run python -m unittest discover -s tests
 uv run python -m PyInstaller --clean --noconfirm voicecommander.spec
 

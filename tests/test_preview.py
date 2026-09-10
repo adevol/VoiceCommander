@@ -59,9 +59,7 @@ class PreviewTests(unittest.TestCase):
         updates = list(transcribe_live(recorder, model, Settings(), stop))
 
         self.assertEqual(updates[0], PreviewText("", "Hello brave", 0.0, "de"))
-        self.assertEqual(
-            updates[1], PreviewText("Hello", " brave world", 1.0, "de")
-        )
+        self.assertEqual(updates[1], PreviewText("Hello", " brave world", 1.0, "de"))
         self.assertEqual(
             [call.kwargs["language"] for call in model.preview.call_args_list],
             ["auto", "de"],
@@ -104,11 +102,7 @@ class PreviewTests(unittest.TestCase):
         stop.wait.side_effect = [False, False, False, False, True]
         stop.is_set.return_value = False
 
-        updates = list(
-            transcribe_live(
-                recorder, model, Settings(), stop
-            )
-        )
+        updates = list(transcribe_live(recorder, model, Settings(), stop))
 
         self.assertTrue(
             all(

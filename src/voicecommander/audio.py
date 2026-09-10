@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 def write_wav(data: bytes) -> Path:
     directory = Path(tempfile.gettempdir()) / "VoiceCommander"
     directory.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(prefix="recording-", suffix=".wav", dir=directory, delete=False) as temporary:
+    with tempfile.NamedTemporaryFile(
+        prefix="recording-", suffix=".wav", dir=directory, delete=False
+    ) as temporary:
         path = Path(temporary.name)
     with wave.open(str(path), "wb") as output:
         output.setnchannels(CHANNELS)

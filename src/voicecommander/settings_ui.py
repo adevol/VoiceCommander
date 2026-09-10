@@ -36,7 +36,10 @@ def show_settings(settings: Settings, parent: object | None = None) -> Settings 
     root = tk.Tk() if parent is None else tk.Toplevel(parent)
     root.title("VoiceCommander Settings")
     root.resizable(False, False)
-    values = {field.name: tk.StringVar(value=str(getattr(settings, field.name))) for field in fields(Settings)}
+    values = {
+        field.name: tk.StringVar(value=str(getattr(settings, field.name)))
+        for field in fields(Settings)
+    }
     values["live_preview"] = tk.BooleanVar(value=settings.live_preview)
     values["language"].set(
         next(name for name, code in LANGUAGES.items() if code == settings.language)
@@ -106,9 +109,7 @@ def show_settings(settings: Settings, parent: object | None = None) -> Settings 
     def save() -> None:
         nonlocal result
         try:
-            raw = {
-                field.name: str(values[field.name].get()).strip() for field in fields(Settings)
-            }
+            raw = {field.name: str(values[field.name].get()).strip() for field in fields(Settings)}
             raw["language"] = LANGUAGES[raw["language"]]
             raw["max_seconds"] = int(raw["max_seconds"])
             raw["live_preview"] = bool(values["live_preview"].get())

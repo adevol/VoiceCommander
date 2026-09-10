@@ -151,10 +151,13 @@ def load_settings(path: Path = CONFIG_PATH) -> Settings:
 def save_settings(settings: Settings, path: Path = CONFIG_PATH) -> None:
     validate(settings)
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = "\n".join(
-        f"{field.name} = {json.dumps(getattr(settings, field.name), ensure_ascii=False)}"
-        for field in fields(Settings)
-    ) + "\n"
+    text = (
+        "\n".join(
+            f"{field.name} = {json.dumps(getattr(settings, field.name), ensure_ascii=False)}"
+            for field in fields(Settings)
+        )
+        + "\n"
+    )
     temporary = path.with_suffix(".tmp")
     temporary.write_text(text, encoding="utf-8")
     temporary.replace(path)

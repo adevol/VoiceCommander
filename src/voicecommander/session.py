@@ -106,7 +106,11 @@ class RecordingSession:
             if self._worker is not None:
                 self._worker.join(timeout=0.5)
                 if self._worker.is_alive():
-                    if self._model is not None and self._model.done() and not self._model.cancelled():
+                    if (
+                        self._model is not None
+                        and self._model.done()
+                        and not self._model.cancelled()
+                    ):
                         if self._model.exception() is None:
                             self._model.result().cancel_preview()
                     self._worker.join()
@@ -116,9 +120,7 @@ class RecordingSession:
                 settings = replace(settings, language=self._preview.language)
             return settings, self._preview
 
-    def finish(
-        self, api_key: str, on_refine: Callable[[str], None] | None = None
-    ) -> str:
+    def finish(self, api_key: str, on_refine: Callable[[str], None] | None = None) -> str:
         """Produce the final text, keeping preview reuse private to this recording."""
         if self._recording or self.path is None:
             raise RuntimeError("Stop recording before finalizing")
@@ -132,8 +134,11 @@ class RecordingSession:
             if model is None:
                 raise RuntimeError("Local ASR model is not loaded")
             raw = model.transcribe(
-                self.path, language=settings.language, vocabulary=settings.vocabulary,
-                timeout=max(300, settings.max_seconds * 4), preview=preview,
+                self.path,
+                language=settings.language,
+                vocabulary=settings.vocabulary,
+                timeout=max(300, settings.max_seconds * 4),
+                preview=preview,
             )
         else:
             raw = transcribe_openrouter(self.path, settings, api_key)

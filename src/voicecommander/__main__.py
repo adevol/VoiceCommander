@@ -11,7 +11,9 @@ from voicecommander.settings_ui import show_settings
 def main() -> int:
     parser = argparse.ArgumentParser(description="VoiceCommander")
     parser.add_argument("--settings", action="store_true", help="edit settings and exit")
-    parser.add_argument("--captions", action="store_true", help="live-caption system audio in a window")
+    parser.add_argument(
+        "--captions", action="store_true", help="live-caption system audio in a window"
+    )
     args = parser.parse_args()
 
     configure_logging()

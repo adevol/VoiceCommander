@@ -1,7 +1,7 @@
 import queue
 import unittest
-from unittest.mock import Mock, patch
 from sys import modules
+from unittest.mock import Mock, patch
 
 from voicecommander.local_asr import PreviewText
 from voicecommander.preview import PreviewOverlay

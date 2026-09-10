@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
-import json
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, call, patch
@@ -39,10 +39,17 @@ class PipelineTests(unittest.TestCase):
     @staticmethod
     def stream_event(content=None, finish_reason=None, **extra):
         chunk = {
-            "id": "test", "model": "test-model", "created": 0,
+            "id": "test",
+            "model": "test-model",
+            "created": 0,
             "object": "chat.completion.chunk",
-            "choices": [{"index": 0, "delta": {"content": content} if content is not None else {},
-                         "finish_reason": finish_reason}],
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": content} if content is not None else {},
+                    "finish_reason": finish_reason,
+                }
+            ],
         } | extra
         return f"data: {json.dumps(chunk)}\n\n".encode()
 
@@ -53,9 +60,7 @@ class PipelineTests(unittest.TestCase):
         ) as postprocess:
             result = refine_transcript("raw transcript", settings, "secret")
         self.assertEqual(result, "edited transcript")
-        postprocess.assert_called_once_with(
-            "raw transcript", settings, "secret", markdown=False
-        )
+        postprocess.assert_called_once_with("raw transcript", settings, "secret", markdown=False)
 
     def test_postprocessing_failure_falls_back_to_raw_transcript(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=50)
@@ -71,21 +76,20 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result, "raw transcript")
 
     @patch("voicecommander.pipeline.monotonic", side_effect=[0.0, 0.1, 0.2])
-    def test_postprocessing_stream_accumulates_text(
-        self, monotonic: Mock
-    ) -> None:
+    def test_postprocessing_stream_accumulates_text(self, monotonic: Mock) -> None:
         response = httpx.Response(
-            200, headers={"Content-Type": "text/event-stream"},
+            200,
+            headers={"Content-Type": "text/event-stream"},
             content=b": OPENROUTER PROCESSING\n\n"
-            + self.stream_event("Hello ") + self.stream_event("world")
-            + self.stream_event(finish_reason="stop") + b"data: [DONE]\n\n",
+            + self.stream_event("Hello ")
+            + self.stream_event("world")
+            + self.stream_event(finish_reason="stop")
+            + b"data: [DONE]\n\n",
         )
         updates = []
 
         with self.cloud(lambda request: response) as requests:
-            result = postprocess_openrouter_stream(
-                "Raw", Settings(), "secret", updates.append
-            )
+            result = postprocess_openrouter_stream("Raw", Settings(), "secret", updates.append)
 
         self.assertEqual(result, "Hello world")
         self.assertEqual(updates, ["Hello ", "Hello world"])
@@ -162,9 +166,7 @@ class PipelineTests(unittest.TestCase):
                 markdown=True,
             )
         self.assertEqual(result, "# Finished")
-        postprocess.assert_called_once_with(
-            "raw description", settings, "secret", markdown=True
-        )
+        postprocess.assert_called_once_with("raw description", settings, "secret", markdown=True)
 
     def test_markdown_mode_does_not_paste_raw_instructions_on_failure(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=0)
@@ -254,7 +256,9 @@ class PipelineTests(unittest.TestCase):
         for status in (400, 500):
             with (
                 self.subTest(status=status),
-                self.cloud(lambda request: httpx.Response(status, text="invalid model")) as requests,
+                self.cloud(
+                    lambda request: httpx.Response(status, text="invalid model")
+                ) as requests,
                 self.assertRaisesRegex(RuntimeError, f"HTTP {status}: invalid model"),
             ):
                 _openrouter("secret", {"messages": []})
@@ -264,12 +268,23 @@ class PipelineTests(unittest.TestCase):
         def respond(request):
             if len(requests) == 1:
                 raise httpx.ConnectError("connection failed", request=request)
-            return httpx.Response(200, json={
-                "id": "test", "model": "google/test-model", "created": 0,
-                "object": "chat.completion", "system_fingerprint": None,
-                "choices": [{"index": 0, "finish_reason": "stop",
-                             "message": {"role": "assistant", "content": " Bonjour "}}],
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "id": "test",
+                    "model": "google/test-model",
+                    "created": 0,
+                    "object": "chat.completion",
+                    "system_fingerprint": None,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": " Bonjour "},
+                        }
+                    ],
+                },
+            )
 
         with tempfile.TemporaryDirectory() as directory, self.cloud(respond) as requests:
             path = Path(directory) / "audio.wav"
@@ -283,8 +298,10 @@ class PipelineTests(unittest.TestCase):
         payload = json.loads(requests[-1].content)
         self.assertEqual(payload["model"], "google/test-model")
         self.assertEqual(payload["provider"], {"data_collection": "deny"})
-        self.assertEqual(payload["messages"][0]["content"][1]["input_audio"],
-                         {"data": "UklGRg==", "format": "wav"})
+        self.assertEqual(
+            payload["messages"][0]["content"][1]["input_audio"],
+            {"data": "UklGRg==", "format": "wav"},
+        )
         self.assertEqual(requests[-1].headers["Authorization"], "Bearer secret")
         self.assertEqual(requests[-1].extensions["timeout"]["read"], 300)
 
@@ -295,11 +312,17 @@ class PipelineTests(unittest.TestCase):
             (self.stream_event(finish_reason="stop"), "empty"),
             (self.stream_event("Partial", finish_reason="error"), "stream failed"),
             (b'data: {"choices": "invalid"}\n\n', "invalid response"),
-            (self.stream_event(error={"code": 500, "message": "provider failed"}), "provider failed"),
+            (
+                self.stream_event(error={"code": 500, "message": "provider failed"}),
+                "provider failed",
+            ),
         ):
-            response = httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=body)
+            response = httpx.Response(
+                200, headers={"Content-Type": "text/event-stream"}, content=body
+            )
             with (
-                self.subTest(body=body), self.cloud(lambda request: response),
+                self.subTest(body=body),
+                self.cloud(lambda request: response),
                 self.assertRaisesRegex(RuntimeError, message),
             ):
                 postprocess_openrouter_stream("Raw", Settings(), "secret", Mock())

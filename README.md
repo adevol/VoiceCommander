@@ -166,6 +166,17 @@ uv run python -m unittest discover -s tests
 uv run python scripts/benchmark_asr.py recording.wav --model base
 ```
 
+Ruff handles Python linting, import sorting, and formatting with a 100-character
+line length. Install it with `uv sync`, then run:
+
+```powershell
+uv run ruff check --fix .
+uv run ruff format .
+```
+
+To check without changing files, use `uv run ruff check .` and
+`uv run ruff format --check .`. The build runs both checks before the tests.
+
 Each dictation has a recording session that owns capture, its timer, preview
 state, and final transcription. Stopping capture prevents further preview
 updates. Finalization drains the preview worker, cancelling a slow request

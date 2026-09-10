@@ -19,12 +19,8 @@ from .settings import WHISPER_DEFINITIONS, Settings
 PREVIEW_INTERVAL = 2.0
 PREVIEW_WINDOW_SECONDS = 8.0
 CORRECTION_HORIZON = 2.0
-PREVIEW_MODELS = frozenset(
-    name for name, model in WHISPER_DEFINITIONS.items() if model.preview
-)
-PREVIEW_WINDOW_BYTES = round(
-    PREVIEW_WINDOW_SECONDS * SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH
-)
+PREVIEW_MODELS = frozenset(name for name, model in WHISPER_DEFINITIONS.items() if model.preview)
+PREVIEW_WINDOW_BYTES = round(PREVIEW_WINDOW_SECONDS * SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH)
 
 
 def transcribe_live(
@@ -50,8 +46,10 @@ def transcribe_live(
         if stop.is_set():
             break
         result = model.preview(
-            pcm16, language=language,
-            vocabulary=settings.vocabulary, stop=stop,
+            pcm16,
+            language=language,
+            vocabulary=settings.vocabulary,
+            stop=stop,
         )
         if result is None or stop.is_set():
             continue
@@ -86,7 +84,9 @@ def transcribe_live(
             if combined is not None:
                 tentative = combined[len(stable_text) :]
         update = PreviewText(
-            stable_text, tentative, stable_end,
+            stable_text,
+            tentative,
+            stable_end,
             language if language != "auto" else None,
         )
         if update.text:
@@ -151,7 +151,8 @@ class PreviewOverlay:
         # The first Configure event supplies the width needed for word wrapping.
         lines = (
             self.text.count("1.0", "end-1c", "update", "displaylines")
-            if self.text.winfo_width() > 1 else 0
+            if self.text.winfo_width() > 1
+            else 0
         )
         self.text.configure(height=min(8, (lines or 0) + 1))
         self.root.update_idletasks()

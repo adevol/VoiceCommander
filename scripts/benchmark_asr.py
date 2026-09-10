@@ -100,10 +100,7 @@ def main() -> int:
         f"preview:    {first_preview:.3f} s cold, {warm_preview:.3f} s warm "
         f"for {PREVIEW_WINDOW_SECONDS:g} s ({PREVIEW_WINDOW_SECONDS / warm_preview:.2f}x realtime)"
     )
-    print(
-        f"full final: {full_final:.3f} s "
-        f"({duration / full_final:.2f}x realtime)"
-    )
+    print(f"full final: {full_final:.3f} s ({duration / full_final:.2f}x realtime)")
     if preview_final is not None:
         print(
             f"warm final: {preview_final[0]:.3f} s, "

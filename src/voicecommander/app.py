@@ -45,7 +45,9 @@ def configure_logging() -> Path:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "voicecommander.log"
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    file_handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
+    file_handler = RotatingFileHandler(
+        log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8"
+    )
     file_handler.setFormatter(formatter)
     handlers: list[logging.Handler] = [file_handler]
     if sys.stderr is not None:
@@ -239,7 +241,11 @@ class VoiceCommander:
         except Exception as error:
             logger.exception("Pipeline failed; recording preserved at %s", path)
             if not self._closing:
-                _notify("VoiceCommander failed", f"{error}\n\nRecording preserved at:\n{path}", error=True)
+                _notify(
+                    "VoiceCommander failed",
+                    f"{error}\n\nRecording preserved at:\n{path}",
+                    error=True,
+                )
         finally:
             with self._lock:
                 if self._session is session:

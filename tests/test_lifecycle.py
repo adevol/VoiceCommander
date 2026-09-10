@@ -1,9 +1,9 @@
-from concurrent.futures import Future
-from pathlib import Path
 import queue
 import tempfile
 import threading
 import unittest
+from concurrent.futures import Future
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from voicecommander.app import State, VoiceCommander, _close_model

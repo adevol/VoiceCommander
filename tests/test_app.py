@@ -4,11 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 from sys import modules
-from unittest.mock import Mock, call, patch
+from unittest.mock import Mock, patch
 
 from voicecommander.app import State, VoiceCommander, complete_recording
-from voicecommander.session import RecordingSession
 from voicecommander.local_asr import load_local_model
+from voicecommander.session import RecordingSession
 from voicecommander.settings import Settings
 
 
@@ -210,10 +210,12 @@ class AppTests(unittest.TestCase):
             run_first_tk_poll(tkinter.Tk.return_value)
             app = VoiceCommander(Settings(asr_provider="openrouter"))
             app.request_settings()
+
             def interact() -> None:
                 tkinter.Tk.return_value.after.call_args.args[1]()
                 app.on_hotkey()
                 raise KeyboardInterrupt
+
             tkinter.Tk.return_value.mainloop.side_effect = interact
             app.run()
 

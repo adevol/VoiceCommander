@@ -43,9 +43,7 @@ def is_speech(text: str) -> bool:
     )
 
 
-def merge_overlapping_text(
-    previous: str, current: str, minimum_words: int = 1
-) -> str | None:
+def merge_overlapping_text(previous: str, current: str, minimum_words: int = 1) -> str | None:
     """Join transcripts when one's word suffix repeats the other's prefix."""
     old_words = previous.split()
     new_words = current.split()
@@ -100,7 +98,11 @@ class LocalAsrEngine:
     _closed: bool = field(default=False, init=False, repr=False)
 
     def preview(
-        self, pcm16: bytes, *, language: str = "auto", vocabulary: str = "",
+        self,
+        pcm16: bytes,
+        *,
+        language: str = "auto",
+        vocabulary: str = "",
         stop: Event | None = None,
     ) -> PreviewResult | None:
         """Decode a snapshot, dropping rather than queuing a concurrent request."""
@@ -140,8 +142,12 @@ class LocalAsrEngine:
             raise RuntimeError("Local ASR engine is closed")
         joined = self._finalize_tail(path, preview, language=language, vocabulary=vocabulary)
         return joined or _transcribe_whisper(
-            self.executable, self.model, path,
-            language=language, vocabulary=vocabulary, timeout=timeout,
+            self.executable,
+            self.model,
+            path,
+            language=language,
+            vocabulary=vocabulary,
+            timeout=timeout,
         )
 
     def _finalize_tail(
@@ -206,9 +212,11 @@ class _WhisperServer:
         fields, wav = _preview_request(pcm16, language=language, vocabulary=vocabulary)
         try:
             response = httpx.post(
-                self.url + "/inference", data=fields,
+                self.url + "/inference",
+                data=fields,
                 files={"file": ("preview.wav", wav, "audio/wav")},
-                timeout=30, trust_env=False,
+                timeout=30,
+                trust_env=False,
             )
             result = response.raise_for_status().json()
         except httpx.HTTPStatusError as error:
@@ -299,12 +307,8 @@ def _ensure_runtime(
         with zipfile.ZipFile(archive_path) as archive:
             for member in archive.infolist():
                 name = Path(member.filename).name
-                if not member.is_dir() and (
-                    name in wanted or name.lower().endswith(".dll")
-                ):
-                    with archive.open(member) as source, (directory / name).open(
-                        "wb"
-                    ) as output:
+                if not member.is_dir() and (name in wanted or name.lower().endswith(".dll")):
+                    with archive.open(member) as source, (directory / name).open("wb") as output:
                         shutil.copyfileobj(source, output)
 
     if not all((directory / name).exists() for name in wanted):
@@ -332,7 +336,9 @@ def _ensure_whisper(local_asr_model: str) -> tuple[Path, Path, Path]:
     return executable, WHISPER_DIR / "whisper-server.exe", model
 
 
-def _preview_request(pcm16: bytes, *, language: str, vocabulary: str) -> tuple[dict[str, str], bytes]:
+def _preview_request(
+    pcm16: bytes, *, language: str, vocabulary: str
+) -> tuple[dict[str, str], bytes]:
     wav = BytesIO()
     with wave.open(wav, "wb") as output:
         output.setnchannels(CHANNELS)
@@ -396,8 +402,13 @@ def _whisper_language(language: str) -> str:
 
 
 def _transcribe_whisper(
-    executable: Path, model: Path, path: Path, *,
-    language: str = "auto", vocabulary: str = "", timeout: float = 1200,
+    executable: Path,
+    model: Path,
+    path: Path,
+    *,
+    language: str = "auto",
+    vocabulary: str = "",
+    timeout: float = 1200,
 ) -> str:
     output_base = path.with_suffix(path.suffix + ".whisper")
     output_path = Path(str(output_base) + ".txt")

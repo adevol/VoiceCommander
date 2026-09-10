@@ -45,9 +45,7 @@ class SettingsTests(unittest.TestCase):
             path = Path(directory) / "config.toml"
             for old, new in migrations.items():
                 with self.subTest(old):
-                    path.write_text(
-                        f'local_asr_model = "{old}"\n', encoding="utf-8"
-                    )
+                    path.write_text(f'local_asr_model = "{old}"\n', encoding="utf-8")
                     self.assertEqual(load_settings(path).local_asr_model, new)
 
     def test_settings_reject_unsupported_asr_options(self) -> None:
@@ -64,9 +62,7 @@ class SettingsTests(unittest.TestCase):
             "nemotron-3.5",
             "cohere-transcribe",
         ):
-            with self.subTest(name), self.assertRaisesRegex(
-                ValueError, "Invalid local ASR model"
-            ):
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "Invalid local ASR model"):
                 validate(Settings(local_asr_model=name))
         with self.assertRaisesRegex(ValueError, "Invalid caption ASR model"):
             validate(Settings(caption_asr_model="nemotron-3.5"))

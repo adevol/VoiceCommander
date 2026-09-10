@@ -24,7 +24,11 @@ class RecordingSessionTests(unittest.TestCase):
                 path = session.stop()
                 session.finish("")
                 model.transcribe.assert_called_once_with(
-                    path, language="auto", vocabulary="", timeout=expected, preview=None,
+                    path,
+                    language="auto",
+                    vocabulary="",
+                    timeout=expected,
+                    preview=None,
                 )
 
     def make_session(self, *, settings=None, model=None):
@@ -70,8 +74,11 @@ class RecordingSessionTests(unittest.TestCase):
 
         self.assertEqual(result, "final text")
         model.transcribe.assert_called_once_with(
-            path, language=settings.language, vocabulary=settings.vocabulary,
-            timeout=1200, preview=preview,
+            path,
+            language=settings.language,
+            vocabulary=settings.vocabulary,
+            timeout=1200,
+            preview=preview,
         )
 
     def test_finish_passes_detected_language_to_final_transcription(self):
@@ -91,7 +98,11 @@ class RecordingSessionTests(unittest.TestCase):
             session.finish("")
 
         model.transcribe.assert_called_once_with(
-            path, language="de", vocabulary="", timeout=1200, preview=preview,
+            path,
+            language="de",
+            vocabulary="",
+            timeout=1200,
+            preview=preview,
         )
         self.assertEqual(session.settings.language, "auto")
 
@@ -115,7 +126,11 @@ class RecordingSessionTests(unittest.TestCase):
             session.finish("")
 
         model.transcribe.assert_called_once_with(
-            path, language="auto", vocabulary="", timeout=1200, preview=None,
+            path,
+            language="auto",
+            vocabulary="",
+            timeout=1200,
+            preview=None,
         )
         published = []
         while not updates.empty():
