@@ -21,26 +21,37 @@ def run_first_tk_poll(root: Mock) -> None:
 
 
 class AppTests(unittest.TestCase):
+    @patch("voicecommander.app._beep")
     @patch("voicecommander.app._ctrl_pressed", return_value=False)
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
     @patch("voicecommander.app.Recorder")
-    def test_plain_hotkey_still_works_after_paste(
-        self, recorder_type: Mock, executor_type: Mock, timer: Mock, ctrl_pressed: Mock
+    def test_hotkeys_preserve_mode_and_work_after_paste(
+        self, recorder_type: Mock, executor_type: Mock, timer: Mock, ctrl_pressed: Mock, beep: Mock
     ) -> None:
-        keyboard = Mock()
-        keyboard.is_pressed.return_value = True
-        app = VoiceCommander(Settings(asr_provider="openrouter"))
-        app._register_hotkeys(keyboard)
-        callback = keyboard.add_hotkey.call_args_list[0].args[1]
+        for index, markdown in enumerate((False, True)):
+            with self.subTest(markdown=markdown):
+                recorder_type.reset_mock()
+                executor_type.reset_mock()
+                recorder = recorder_type.return_value
+                recorder.stop.return_value = Path("recording.wav")
+                keyboard = Mock()
+                keyboard.is_pressed.return_value = True
+                app = VoiceCommander(Settings(asr_provider="openrouter"))
+                app._register_hotkeys(keyboard)
+                callback = keyboard.add_hotkey.call_args_list[index].args[1]
 
-        callback()
-        app.state = State.IDLE
-        callback()
+                callback()
+                callback()
 
-        self.assertEqual(recorder_type.return_value.start.call_count, 2)
-        ctrl_pressed.assert_called()
-        keyboard.is_pressed.assert_not_called()
+                executor_type.return_value.submit.assert_called_once_with(app._finish, app._session)
+                self.assertEqual(app._session.markdown, markdown)
+                self.assertEqual(app._session.path, Path("recording.wav"))
+                app.state = State.IDLE
+                callback()
+                self.assertEqual(recorder.start.call_count, 2)
+                ctrl_pressed.assert_called()
+                keyboard.is_pressed.assert_not_called()
 
     @patch("voicecommander.app.deliver_text")
     def test_recording_is_deleted_only_after_success(self, deliver: Mock) -> None:
@@ -96,7 +107,7 @@ class AppTests(unittest.TestCase):
     @patch("voicecommander.app.threading.Timer")
     @patch("voicecommander.app.ThreadPoolExecutor")
     @patch("voicecommander.app.Recorder")
-    def test_old_timer_cannot_stop_a_new_recording(
+    def test_processing_ignores_hotkeys_and_stale_timers_cannot_stop_recordings(
         self, recorder_type: Mock, executor_type: Mock, timer: Mock, beep: Mock
     ) -> None:
         recorder_type.return_value.stop.return_value = Path("recording.wav")
@@ -104,8 +115,17 @@ class AppTests(unittest.TestCase):
         app.on_hotkey()
         first = app._session
         old_timer = timer.call_args.args[1]
+        self.assertEqual(app.state, State.RECORDING)
+        app.on_hotkey()
+        self.assertEqual(app.state, State.PROCESSING)
         app.on_hotkey()
         app.state = State.IDLE
+        old_timer()
+        recorder_type.return_value.start.assert_called_once()
+        recorder_type.return_value.stop.assert_called_once()
+        executor_type.return_value.submit.assert_called_once()
+        timer.return_value.start.assert_called_once()
+
         app.on_hotkey()
         second = app._session
 
@@ -115,52 +135,6 @@ class AppTests(unittest.TestCase):
         self.assertIs(app._session, second)
         self.assertEqual(app.state, State.RECORDING)
         recorder_type.return_value.stop.assert_called_once()
-
-    @patch("voicecommander.app.threading.Timer")
-    @patch("voicecommander.app.ThreadPoolExecutor")
-    @patch("voicecommander.app.Recorder")
-    def test_hotkey_is_ignored_during_processing(
-        self, recorder_type: Mock, executor_type: Mock, timer: Mock
-    ) -> None:
-        recorder = recorder_type.return_value
-        recorder.stop.return_value = Path("recording.wav")
-        executor = executor_type.return_value
-        app = VoiceCommander(Settings(asr_provider="openrouter"))
-
-        app.on_hotkey()
-        self.assertEqual(app.state, State.RECORDING)
-        stale_timer = timer.call_args.args[1]
-        app.on_hotkey()
-        self.assertEqual(app.state, State.PROCESSING)
-        app.on_hotkey()
-        app.state = State.IDLE
-        stale_timer()
-
-        recorder.start.assert_called_once()
-        recorder.stop.assert_called_once()
-        executor.submit.assert_called_once()
-        timer.return_value.start.assert_called_once()
-
-    @patch("voicecommander.app._ctrl_pressed", return_value=False)
-    @patch("voicecommander.app.threading.Timer")
-    @patch("voicecommander.app.ThreadPoolExecutor")
-    @patch("voicecommander.app.Recorder")
-    def test_markdown_hotkey_marks_the_recording_for_markdown(
-        self, recorder_type: Mock, executor_type: Mock, timer: Mock, ctrl_pressed: Mock
-    ) -> None:
-        keyboard = Mock()
-        recorder_type.return_value.stop.return_value = Path("recording.wav")
-        app = VoiceCommander(Settings(asr_provider="openrouter"))
-        app._register_hotkeys(keyboard)
-        markdown_callback = keyboard.add_hotkey.call_args_list[1].args[1]
-
-        markdown_callback()
-        markdown_callback()
-
-        executor_type.return_value.submit.assert_called_once_with(app._finish, app._session)
-        self.assertTrue(app._session.markdown)
-        self.assertEqual(app._session.path, Path("recording.wav"))
-        ctrl_pressed.assert_called()
 
     def test_settings_hotkey_applies_runtime_changes(self) -> None:
         keyboard = Mock()
@@ -177,13 +151,15 @@ class AppTests(unittest.TestCase):
             run_first_tk_poll(preview_type.return_value.root)
             initial = Settings(asr_provider="openrouter", hotkey="f9")
             updated = Settings(
-                asr_provider="openrouter",
+                asr_provider="local",
+                local_asr_model="tiny",
                 hotkey="f10",
                 markdown_hotkey="f6",
                 input_device="3: Microphone",
             )
             show_settings.return_value = updated
             app = VoiceCommander(initial)
+            self.assertIsNone(app._local_model)
             app.run()
 
         self.assertEqual(
@@ -193,6 +169,8 @@ class AppTests(unittest.TestCase):
         show_settings.assert_called_once_with(initial, preview_type.return_value.root)
         recorder_type.assert_called_with("3: Microphone")
         self.assertEqual(app.settings, updated)
+        executor_type.return_value.submit.assert_called_once_with(load_local_model, "tiny")
+        self.assertIsNotNone(app._local_model)
         executor_type.return_value.shutdown.assert_called_once()
 
     def test_settings_window_returns_control_to_recording(self) -> None:
@@ -224,26 +202,6 @@ class AppTests(unittest.TestCase):
         tkinter.Toplevel.return_value.wait_window.assert_called_once_with()
         tkinter.Toplevel.return_value.mainloop.assert_not_called()
         recorder_type.return_value.start.assert_called_once_with()
-
-    def test_switching_to_local_transcription_loads_the_model(self) -> None:
-        with (
-            patch("voicecommander.app.Recorder"),
-            patch("voicecommander.app.ThreadPoolExecutor") as executor_type,
-            patch("voicecommander.app.threading.Event") as event_type,
-            patch("voicecommander.app._beep"),
-            patch("voicecommander.app.show_settings") as show_settings,
-            patch("voicecommander.app.PreviewOverlay") as preview_type,
-            patch.dict(modules, {"keyboard": Mock()}),
-        ):
-            event_type.return_value.is_set.return_value = True
-            run_first_tk_poll(preview_type.return_value.root)
-            show_settings.return_value = Settings(asr_provider="local")
-            app = VoiceCommander(Settings(asr_provider="openrouter"))
-            self.assertIsNone(app._local_model)
-            app.run()
-
-        executor_type.return_value.submit.assert_called_once_with(load_local_model, "base")
-        self.assertIsNotNone(app._local_model)
 
 
 if __name__ == "__main__":

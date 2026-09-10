@@ -165,6 +165,7 @@ class LocalAsrTests(unittest.TestCase):
             timeout=1200,
         )
         engine.close()
+        self.assertTrue(engine._preview_cancel.is_set())
         server.close.assert_called_once_with()
 
     @patch("voicecommander.local_asr._start_whisper_server")
@@ -308,16 +309,6 @@ class LocalAsrTests(unittest.TestCase):
         self.assertEqual(results, [preview])
         engine.close()
 
-    def test_close_stops_the_warm_server(self) -> None:
-        server = Mock()
-        model = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
-        model._server = server
-
-        model.close()
-
-        self.assertTrue(model._preview_cancel.is_set())
-        server.close.assert_called_once_with()
-
     @patch("voicecommander.local_asr._download")
     def test_each_whisper_size_downloads_its_own_verified_file(self, download: Mock) -> None:
         for name, definition in WHISPER_DEFINITIONS.items():
@@ -346,15 +337,15 @@ class LocalAsrTests(unittest.TestCase):
         self.assertEqual(WHISPER_DEFINITIONS["tiny"].filename, "ggml-tiny-q5_1.bin")
 
     @patch("voicecommander.local_asr.subprocess.run")
-    def test_whisper_passes_selected_or_automatic_language(self, run: Mock) -> None:
+    def test_whisper_engine_passes_language_and_timeout_to_cli(self, run: Mock) -> None:
         run.return_value = Mock(returncode=0, stderr="")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recording.wav"
             path.touch()
             transcript = Path(str(path) + ".whisper.txt")
-            model = partial(
-                _transcribe_whisper,
+            engine = LocalAsrEngine(
                 Path("whisper-cli.exe"),
+                Path("whisper-server.exe"),
                 Path("ggml-base-q5_1.bin"),
             )
             for language, expected, text in (
@@ -363,23 +354,10 @@ class LocalAsrTests(unittest.TestCase):
             ):
                 with self.subTest(language):
                     transcript.write_text(text, encoding="utf-8")
-                    self.assertEqual(model(path, language=language), text)
+                    self.assertEqual(engine.transcribe(path, language=language, timeout=37), text)
                     command = run.call_args.args[0]
                     self.assertEqual(command[command.index("-l") + 1], expected)
-
-    @patch("voicecommander.local_asr.subprocess.run")
-    def test_whisper_forwards_explicit_subprocess_timeout(self, run: Mock) -> None:
-        run.return_value = Mock(returncode=0, stderr="")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "recording.wav"
-            path.touch()
-            Path(str(path) + ".whisper.txt").write_text("Hello", encoding="utf-8")
-
-            engine = LocalAsrEngine(Path("whisper-cli.exe"), Path("server.exe"), Path("model.bin"))
-            result = engine.transcribe(path, timeout=37)
-
-        self.assertEqual(result, "Hello")
-        self.assertEqual(run.call_args.kwargs["timeout"], 37)
+                    self.assertEqual(run.call_args.kwargs["timeout"], 37)
 
     @patch("voicecommander.pipeline._openrouter")
     @patch("voicecommander.local_asr.subprocess.run")

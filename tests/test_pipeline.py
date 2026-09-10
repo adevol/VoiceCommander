@@ -130,10 +130,14 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("auto locale", prompt)
 
     @patch("voicecommander.pipeline._openrouter")
-    def test_markdown_mode_requests_structure_and_latex(self, openrouter: Mock) -> None:
+    def test_markdown_with_editing_off_still_requests_structure_and_latex(
+        self, openrouter: Mock
+    ) -> None:
         openrouter.return_value = Mock(choices=[Mock(message=Mock(content="## Result"))])
 
-        result = postprocess_openrouter("Describe a heading", Settings(), "secret", markdown=True)
+        result = refine_transcript(
+            "Describe a heading", Settings(postprocess_strength=0), "secret", markdown=True
+        )
 
         self.assertEqual(result, "## Result")
         prompt = openrouter.call_args.args[1]["messages"][0]["content"]
@@ -141,23 +145,6 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("$...$", prompt)
         self.assertIn("$$...$$", prompt)
         self.assertIn("without commentary", prompt)
-
-    def test_markdown_mode_postprocesses_even_when_editing_is_off(self) -> None:
-        settings = Settings(asr_provider="openrouter", postprocess_strength=0)
-        with (
-            patch(
-                "voicecommander.pipeline.postprocess_openrouter",
-                return_value="# Finished",
-            ) as postprocess,
-        ):
-            result = refine_transcript(
-                "raw description",
-                settings,
-                "secret",
-                markdown=True,
-            )
-        self.assertEqual(result, "# Finished")
-        postprocess.assert_called_once_with("raw description", settings, "secret", markdown=True)
 
     def test_markdown_mode_does_not_paste_raw_instructions_on_failure(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=0)
