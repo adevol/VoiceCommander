@@ -52,59 +52,37 @@ class RecordingSessionTests(unittest.TestCase):
         future.set_result(model)
         return future, model
 
-    def test_finish_uses_captured_model_settings_and_preview(self):
-        model_future, model = self.loaded_model()
-        settings = Settings(local_asr_model="base", language="de-DE")
-        session, recorder, _ = self.make_session(settings=settings, model=model_future)
-        preview = PreviewText("Fest", "", 3.0)
-        preview_done = threading.Event()
+    def test_finish_uses_recording_settings_and_preview(self):
+        for language, expected in (("de-DE", "de-DE"), ("auto", "de")):
+            with self.subTest(language=language):
+                model_future, model = self.loaded_model()
+                settings = Settings(language=language, vocabulary="VoiceCommander")
+                session, recorder, _ = self.make_session(settings=settings, model=model_future)
+                preview = PreviewText("Hallo", "", 3.0, "de")
+                preview_done = threading.Event()
 
-        def transcribe(rec, loaded_model, used_settings, stop):
-            self.assertIs(rec, recorder)
-            self.assertIs(loaded_model, model)
-            self.assertIs(used_settings, settings)
-            yield preview
-            preview_done.set()
+                def transcribe(rec, loaded_model, used_settings, stop):
+                    self.assertIs(rec, recorder)
+                    self.assertIs(loaded_model, model)
+                    self.assertIs(used_settings, settings)
+                    yield preview
+                    preview_done.set()
 
-        with patch("voicecommander.session.transcribe_live", side_effect=transcribe):
-            session.start(Mock())
-            self.assertTrue(preview_done.wait(1))
-            path = session.stop()
-            result = session.finish("")
+                with patch("voicecommander.session.transcribe_live", side_effect=transcribe):
+                    session.start(Mock())
+                    self.assertTrue(preview_done.wait(1))
+                    path = session.stop()
+                    result = session.finish("")
 
-        self.assertEqual(result, "final text")
-        model.transcribe.assert_called_once_with(
-            path,
-            language=settings.language,
-            vocabulary=settings.vocabulary,
-            timeout=1200,
-            preview=preview,
-        )
-
-    def test_finish_passes_detected_language_to_final_transcription(self):
-        model_future, model = self.loaded_model()
-        session, _, _ = self.make_session(model=model_future)
-        preview = PreviewText("Hallo", "", 3.0, "de")
-        preview_done = threading.Event()
-
-        def transcribe(recorder, loaded_model, used_settings, stop):
-            yield preview
-            preview_done.set()
-
-        with patch("voicecommander.session.transcribe_live", side_effect=transcribe):
-            session.start(Mock())
-            self.assertTrue(preview_done.wait(1))
-            path = session.stop()
-            session.finish("")
-
-        model.transcribe.assert_called_once_with(
-            path,
-            language="de",
-            vocabulary="",
-            timeout=1200,
-            preview=preview,
-        )
-        self.assertEqual(session.settings.language, "auto")
+                self.assertEqual(result, "final text")
+                model.transcribe.assert_called_once_with(
+                    path,
+                    language=expected,
+                    vocabulary=settings.vocabulary,
+                    timeout=1200,
+                    preview=preview,
+                )
+                self.assertEqual(session.settings.language, language)
 
     def test_late_preview_result_is_ignored_after_stop(self):
         model_future, model = self.loaded_model()

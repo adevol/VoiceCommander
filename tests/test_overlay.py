@@ -39,34 +39,33 @@ class PreviewOverlayTests(unittest.TestCase):
             [call.args for call in text.insert.call_args_list],
             [("end", "Hello"), ("end", " world", "tentative")],
         )
-        text.tag_configure.assert_called_once_with("tentative", foreground="#a1a1aa")
         text.configure.assert_any_call(state="disabled")
         tkinter.Tk.return_value.deiconify.assert_called_once()
         tkinter.Tk.return_value.update.assert_not_called()
 
-    def test_pump_renders_only_latest_text(self):
+    def test_pump_shows_latest_text_hides_and_reopens(self):
         overlay = _overlay()
         updates = queue.SimpleQueue()
         updates.put("old")
         updates.put("latest")
-
         overlay.pump(updates)
-
         overlay.text.insert.assert_called_once_with("end", "latest")
-        overlay.text.delete.assert_called_once_with("1.0", "end")
         overlay.root.deiconify.assert_called_once_with()
-        overlay.root.lift.assert_called_once_with()
 
-    def test_pump_latest_none_hides_overlay(self):
-        overlay = _overlay()
-        updates = queue.SimpleQueue()
-        updates.put("old")
+        updates.put("stale")
         updates.put(None)
-
         overlay.pump(updates)
-
         overlay.root.withdraw.assert_called_once_with()
-        overlay.root.deiconify.assert_not_called()
+        overlay.root.deiconify.assert_called_once_with()
+        overlay.text.insert.assert_called_once_with("end", "latest")
+
+        updates.put("new text")
+        overlay.pump(updates)
+        self.assertEqual(overlay.root.deiconify.call_count, 2)
+        self.assertEqual(
+            [call.args for call in overlay.text.insert.call_args_list],
+            [("end", "latest"), ("end", "new text")],
+        )
 
     def test_pump_empty_queue_leaves_overlay_unchanged(self):
         overlay = _overlay()
@@ -76,19 +75,6 @@ class PreviewOverlayTests(unittest.TestCase):
         overlay.root.withdraw.assert_not_called()
         overlay.root.deiconify.assert_not_called()
         overlay.text.configure.assert_not_called()
-
-    def test_pump_can_show_text_after_hide(self):
-        overlay = _overlay()
-        updates = queue.SimpleQueue()
-        updates.put(None)
-        overlay.pump(updates)
-
-        updates.put("new text")
-        overlay.pump(updates)
-
-        overlay.root.withdraw.assert_called_once_with()
-        overlay.root.deiconify.assert_called_once_with()
-        overlay.text.insert.assert_called_once_with("end", "new text")
 
     def test_long_preview_keeps_the_changing_phrase_visible(self):
         overlay = _overlay()

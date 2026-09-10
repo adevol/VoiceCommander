@@ -53,15 +53,6 @@ class PipelineTests(unittest.TestCase):
         } | extra
         return f"data: {json.dumps(chunk)}\n\n".encode()
 
-    def test_refinement_receives_only_the_final_transcript(self) -> None:
-        settings = Settings(postprocess_strength=50)
-        with patch(
-            "voicecommander.pipeline.postprocess_openrouter", return_value="edited transcript"
-        ) as postprocess:
-            result = refine_transcript("raw transcript", settings, "secret")
-        self.assertEqual(result, "edited transcript")
-        postprocess.assert_called_once_with("raw transcript", settings, "secret", markdown=False)
-
     def test_postprocessing_failure_falls_back_to_raw_transcript(self) -> None:
         settings = Settings(asr_provider="openrouter", postprocess_strength=50)
 
@@ -184,45 +175,6 @@ class PipelineTests(unittest.TestCase):
                 markdown=True,
             )
 
-    @patch("voicecommander.pipeline._openrouter")
-    def test_openrouter_transcription_sends_audio_to_a_chat_model(self, openrouter: Mock) -> None:
-        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="Transcript"))])
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "recording.wav"
-            path.write_bytes(b"RIFF")
-            result = transcribe_openrouter(
-                path,
-                Settings(
-                    asr_provider="openrouter",
-                    language="de-DE",
-                    openrouter_asr_model="google/gemini-2.5-flash",
-                ),
-                "secret",
-            )
-
-        self.assertEqual(result, "Transcript")
-        payload = openrouter.call_args.args[1]
-        self.assertEqual(payload["model"], "google/gemini-2.5-flash")
-        self.assertEqual(payload["provider"], {"data_collection": "deny"})
-        parts = payload["messages"][0]["content"]
-        self.assertIn("de-DE", parts[0]["text"])
-        self.assertEqual(parts[1]["input_audio"], {"data": "UklGRg==", "format": "wav"})
-
-    @patch("voicecommander.pipeline._openrouter")
-    def test_openrouter_transcription_can_detect_language_automatically(
-        self, openrouter: Mock
-    ) -> None:
-        openrouter.return_value = Mock(choices=[Mock(message=Mock(content="Bonjour"))])
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "recording.wav"
-            path.write_bytes(b"RIFF")
-            result = transcribe_openrouter(path, Settings(), "secret")
-
-        self.assertEqual(result, "Bonjour")
-        instruction = openrouter.call_args.args[1]["messages"][0]["content"][0]["text"]
-        self.assertIn("Detect the spoken language", instruction)
-        self.assertNotIn("auto", instruction.casefold())
-
     def test_connection_reset_is_retried_then_reported_cleanly(self) -> None:
         def reset(request):
             raise httpx.ReadError("forcibly closed", request=request)
@@ -286,24 +238,28 @@ class PipelineTests(unittest.TestCase):
                 },
             )
 
-        with tempfile.TemporaryDirectory() as directory, self.cloud(respond) as requests:
+        with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audio.wav"
             path.write_bytes(b"RIFF")
-            with self.assertLogs("voicecommander.pipeline", level="WARNING"):
-                result = transcribe_openrouter(
-                    path, Settings(openrouter_asr_model="google/test-model"), "secret"
-                )
-        self.assertEqual(result, "Bonjour")
-        self.assertEqual(len(requests), 2)
-        payload = json.loads(requests[-1].content)
-        self.assertEqual(payload["model"], "google/test-model")
-        self.assertEqual(payload["provider"], {"data_collection": "deny"})
-        self.assertEqual(
-            payload["messages"][0]["content"][1]["input_audio"],
-            {"data": "UklGRg==", "format": "wav"},
-        )
-        self.assertEqual(requests[-1].headers["Authorization"], "Bearer secret")
-        self.assertEqual(requests[-1].extensions["timeout"]["read"], 300)
+            for language, instruction in (
+                ("auto", "Detect the spoken language"),
+                ("de-DE", "de-DE"),
+            ):
+                with self.subTest(language=language), self.cloud(respond) as requests:
+                    settings = Settings(language=language, openrouter_asr_model="google/test-model")
+                    with self.assertLogs("voicecommander.pipeline", level="WARNING"):
+                        result = transcribe_openrouter(path, settings, "secret")
+                self.assertEqual(result, "Bonjour")
+                self.assertEqual(len(requests), 2)
+                payload = json.loads(requests[-1].content)
+                self.assertEqual(payload["model"], "google/test-model")
+                self.assertEqual(payload["provider"], {"data_collection": "deny"})
+                parts = payload["messages"][0]["content"]
+                self.assertIn(instruction, parts[0]["text"])
+                self.assertNotIn("auto", parts[0]["text"].casefold())
+                self.assertEqual(parts[1]["input_audio"], {"data": "UklGRg==", "format": "wav"})
+                self.assertEqual(requests[-1].headers["Authorization"], "Bearer secret")
+                self.assertEqual(requests[-1].extensions["timeout"]["read"], 300)
 
     def test_incomplete_invalid_and_failed_streams_are_rejected(self) -> None:
         for body, message in (

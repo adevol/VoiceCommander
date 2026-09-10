@@ -203,65 +203,41 @@ class LocalAsrTests(unittest.TestCase):
 
     @patch("voicecommander.local_asr._start_whisper_server")
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
-    def test_whisper_engine_falls_back_when_the_preview_tail_does_not_match(
-        self, transcribe: Mock, start_server: Mock
+    def test_unusable_preview_falls_back_to_full_decode(
+        self, transcribe: Mock, start: Mock
     ) -> None:
-        start_server.return_value.transcribe.return_value = PreviewResult(
-            "different words", (), 3.0
+        cases = (
+            ("missing server", 24.0, None, 0),
+            ("short preview", 4.0, "Hello brave new ending", 0),
+            ("mismatched tail", 24.0, "different words", 1),
+            ("no new words", 24.0, "Hello brave new", 1),
         )
-        engine = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
         path = write_wav(b"\0\0" * 16_000 * 26)
-        try:
-            text = engine.transcribe(path, preview=PreviewText("Hello brave new", "", 24.0))
-        finally:
-            path.unlink()
+        self.addCleanup(path.unlink)
+        for name, stable_end, tail, decodes in cases:
+            with self.subTest(case=name):
+                transcribe.reset_mock()
+                server = Mock()
+                server.process.poll.return_value = None
+                server.transcribe.return_value = PreviewResult(tail or "", (), 3.0)
+                engine = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
+                engine._server = server if tail is not None else None
 
-        self.assertEqual(text, "full fallback")
-        transcribe.assert_called_once_with(
-            Path("cli.exe"),
-            Path("model.bin"),
-            path,
-            language="auto",
-            vocabulary="",
-            timeout=1200,
-        )
-        start_server.assert_not_called()
+                result = engine.transcribe(
+                    path, preview=PreviewText("Hello brave new", "", stable_end)
+                )
 
-    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
-    def test_whisper_engine_rejects_a_tail_with_no_new_words(self, transcribe: Mock) -> None:
-        server = Mock()
-        server.process.poll.return_value = None
-        server.transcribe.return_value = PreviewResult(
-            "Hello brave new",
-            (PreviewSegment("Hello brave new", 2.0),),
-            2.0,
-        )
-        engine = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
-        engine._server = server
-        path = write_wav(b"\0\0" * 16_000 * 26)
-        try:
-            text = engine.transcribe(path, preview=PreviewText("Hello brave new", "", 24.0))
-        finally:
-            path.unlink()
-
-        self.assertEqual(text, "full fallback")
-        transcribe.assert_called_once()
-
-    @patch("voicecommander.local_asr._transcribe_whisper", return_value="full transcript")
-    def test_short_preview_uses_the_full_decode(self, transcribe: Mock) -> None:
-        server = Mock()
-        server.process.poll.return_value = None
-        engine = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
-        engine._server = server
-        path = write_wav(b"\0\0" * 16_000 * 6)
-        try:
-            text = engine.transcribe(path, preview=PreviewText("Hello", "", 4.0))
-        finally:
-            path.unlink()
-
-        self.assertEqual(text, "full transcript")
-        server.transcribe.assert_not_called()
-        transcribe.assert_called_once()
+                self.assertEqual(result, "full fallback")
+                self.assertEqual(server.transcribe.call_count, decodes)
+                transcribe.assert_called_once_with(
+                    Path("cli.exe"),
+                    Path("model.bin"),
+                    path,
+                    language="auto",
+                    vocabulary="",
+                    timeout=1200,
+                )
+                start.assert_not_called()
 
     @patch("voicecommander.local_asr._transcribe_whisper", return_value="full fallback")
     def test_tail_decoder_failure_falls_back_to_full_decode(self, transcribe: Mock) -> None:
