@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 from voicecommander.local_asr import PreviewResult, PreviewSegment, PreviewText
 from voicecommander.preview import transcribe_live
@@ -28,11 +28,17 @@ class PreviewTests(unittest.TestCase):
 
                 self.assertEqual([update.language for update in updates], expected)
 
-    def test_live_preview_publishes_the_latest_transcript(self) -> None:
+    @patch("voicecommander.preview.monotonic")
+    def test_live_preview_publishes_the_latest_transcript_without_extra_decode_delay(
+        self, monotonic: Mock
+    ) -> None:
+        now = 0.0
+        waits = []
+        monotonic.side_effect = lambda: now
         recorder = Mock()
         recorder.snapshot.return_value = b"pcm"
         model = Mock()
-        model.preview.side_effect = [
+        results = [
             PreviewResult(
                 "Hello brave",
                 (
@@ -52,20 +58,39 @@ class PreviewTests(unittest.TestCase):
                 5.0,
             ),
         ]
+
+        def decode(*args, **kwargs):
+            nonlocal now
+            now += (0.4, 1.6)[model.preview.call_count - 1]
+            return results[model.preview.call_count - 1]
+
+        def wait(timeout):
+            nonlocal now
+            waits.append(timeout)
+            now += timeout
+            return len(waits) > 2
+
+        model.preview.side_effect = decode
         stop = Mock()
-        stop.wait.side_effect = [False, False, True]
+        stop.wait.side_effect = wait
         stop.is_set.return_value = False
 
         updates = list(transcribe_live(recorder, model, Settings(), stop))
 
         self.assertEqual(updates[0], PreviewText("", "Hello brave", 0.0, "de"))
         self.assertEqual(updates[1], PreviewText("Hello", " brave world", 1.0, "de"))
+        self.assertEqual(len(waits), 3)
+        for actual, expected in zip(waits, (1.0, 0.6, 0.0)):
+            self.assertAlmostEqual(actual, expected)
         self.assertEqual(
             [call.kwargs["language"] for call in model.preview.call_args_list],
             ["auto", "de"],
         )
 
-    def test_live_preview_decodes_bounded_windows_with_absolute_commit_times(self) -> None:
+    @patch("voicecommander.preview.monotonic", return_value=0)
+    def test_live_preview_decodes_bounded_windows_with_absolute_commit_times(
+        self, monotonic: Mock
+    ) -> None:
         bytes_per_second = 16_000 * 2
         recorder = Mock()
         recording = b"\0" * bytes_per_second * 20
@@ -122,7 +147,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(updates[1].stable_end, 4.0)
         self.assertEqual(updates[3].stable, "zero one two three")
         self.assertEqual(updates[3].stable_end, 8.0)
-        stop.wait.assert_has_calls([call(2.0)] * 5)
+        stop.wait.assert_has_calls([call(1.0)] * 5)
 
 
 if __name__ == "__main__":

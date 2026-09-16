@@ -5,6 +5,7 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Iterator
+from time import monotonic
 
 from .audio import CHANNELS, SAMPLE_RATE, SAMPLE_WIDTH, Recorder
 from .local_asr import (
@@ -16,7 +17,7 @@ from .local_asr import (
 )
 from .settings import WHISPER_DEFINITIONS, Settings
 
-PREVIEW_INTERVAL = 2.0
+PREVIEW_INTERVAL = 1.0
 PREVIEW_WINDOW_SECONDS = 8.0
 CORRECTION_HORIZON = 2.0
 PREVIEW_MODELS = frozenset(name for name, model in WHISPER_DEFINITIONS.items() if model.preview)
@@ -35,7 +36,10 @@ def transcribe_live(
     stable_text = ""
     stable_end = 0.0
     language = settings.language
-    while not stop.wait(PREVIEW_INTERVAL):
+    next_preview = monotonic() + PREVIEW_INTERVAL
+    while not stop.wait(max(0.0, next_preview - monotonic())):
+        # Include decoding time in the interval; requests remain sequential.
+        next_preview = monotonic() + PREVIEW_INTERVAL
         window_start = max(0.0, stable_end - CORRECTION_HORIZON)
         if window_start != previous_start:
             previous = None
