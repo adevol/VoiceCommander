@@ -21,6 +21,7 @@ PREVIEW_WINDOW_SECONDS = 8.0
 CORRECTION_HORIZON = 2.0
 PREVIEW_MODELS = frozenset(name for name, model in WHISPER_DEFINITIONS.items() if model.preview)
 PREVIEW_WINDOW_BYTES = round(PREVIEW_WINDOW_SECONDS * SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH)
+PREVIEW_DISPLAY_CHARACTERS = 500
 
 
 def transcribe_live(
@@ -110,7 +111,7 @@ class PreviewOverlay:
             font=("Segoe UI", 13),
             wrap="word",
             width=72,
-            height=1,
+            height=4,
             borderwidth=0,
             highlightthickness=0,
             takefocus=False,
@@ -118,7 +119,11 @@ class PreviewOverlay:
         )
         self.text.tag_configure("tentative", foreground="#a1a1aa")
         self.text.pack(padx=20, pady=14)
-        self.text.bind("<Configure>", lambda event: self._resize())
+        self.root.update_idletasks()
+        width = self.text.winfo_reqwidth() + 40
+        height = self.text.winfo_reqheight() + 28
+        x = (self.root.winfo_screenwidth() - width) // 2
+        self.root.geometry(f"{width}x{height}+{x}+28")
 
     def pump(self, updates: queue.SimpleQueue[PreviewText | str | None]) -> None:
         latest: PreviewText | str | None = None
@@ -134,33 +139,29 @@ class PreviewOverlay:
         if latest is None:
             self.root.withdraw()
             return
+        # Flatten and trim only the display; finalization keeps the full preview.
+        content = latest.text if isinstance(latest, PreviewText) else latest
+        content = " ".join(content.split())
+        start = max(0, len(content) - PREVIEW_DISPLAY_CHARACTERS)
+        if start and content[start - 1] != " ":
+            boundary = content.find(" ", start)
+            if boundary != -1:
+                start = boundary + 1
+        visible = content[start:]
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
         if isinstance(latest, PreviewText):
-            self.text.insert("end", latest.stable)
-            self.text.insert("end", latest.tentative, "tentative")
+            stable_end = max(0, len(" ".join(latest.stable.split())) - start)
+            self.text.insert("end", visible[:stable_end])
+            self.text.insert("end", visible[stable_end:], "tentative")
         else:
-            self.text.insert("end", latest)
+            self.text.insert("end", visible)
         self.text.configure(state="disabled")
         self.root.deiconify()
-        self._resize()
-        self.root.lift()
-
-    def _resize(self) -> None:
-        # Keep long dictations compact and the changing phrase in view.
-        # The first Configure event supplies the width needed for word wrapping.
-        lines = (
-            self.text.count("1.0", "end-1c", "update", "displaylines")
-            if self.text.winfo_width() > 1
-            else 0
-        )
-        self.text.configure(height=min(8, (lines or 0) + 1))
+        # Lay out wrapping before scrolling, including the first visible update.
         self.root.update_idletasks()
-        width = self.text.winfo_reqwidth() + 40
-        height = self.text.winfo_reqheight() + 28
-        x = (self.root.winfo_screenwidth() - width) // 2
-        self.root.geometry(f"{width}x{height}+{x}+28")
         self.text.see("end")
+        self.root.lift()
 
     def close(self) -> None:
         self.root.destroy()

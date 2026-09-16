@@ -10,12 +10,7 @@ from voicecommander.preview import PreviewOverlay
 def _overlay():
     overlay = PreviewOverlay.__new__(PreviewOverlay)
     overlay.root = Mock()
-    overlay.root.winfo_screenwidth.return_value = 1000
     overlay.text = Mock()
-    overlay.text.winfo_reqwidth.return_value = 100
-    overlay.text.winfo_width.return_value = 100
-    overlay.text.winfo_reqheight.return_value = 20
-    overlay.text.count.return_value = 0
     return overlay
 
 
@@ -24,9 +19,7 @@ class PreviewOverlayTests(unittest.TestCase):
         tkinter = Mock()
         tkinter.Tk.return_value.winfo_screenwidth.return_value = 1920
         tkinter.Text.return_value.winfo_reqwidth.return_value = 300
-        tkinter.Text.return_value.winfo_width.return_value = 300
         tkinter.Text.return_value.winfo_reqheight.return_value = 40
-        tkinter.Text.return_value.count.return_value = 0
         updates = queue.SimpleQueue()
         updates.put(PreviewText("Hello", " world", 1.0))
 
@@ -40,6 +33,7 @@ class PreviewOverlayTests(unittest.TestCase):
             [("end", "Hello"), ("end", " world", "tentative")],
         )
         text.configure.assert_any_call(state="disabled")
+        self.assertEqual(tkinter.Text.call_args.kwargs["height"], 4)
         tkinter.Tk.return_value.deiconify.assert_called_once()
         tkinter.Tk.return_value.update.assert_not_called()
 
@@ -76,25 +70,41 @@ class PreviewOverlayTests(unittest.TestCase):
         overlay.root.deiconify.assert_not_called()
         overlay.text.configure.assert_not_called()
 
-    def test_long_preview_keeps_the_changing_phrase_visible(self):
-        overlay = _overlay()
-        overlay.text.count.return_value = 30
-        updates = queue.SimpleQueue()
-        updates.put(PreviewText("Long confirmed text", " changing phrase", 10.0))
+    def test_preview_shows_a_bounded_single_paragraph_and_preserves_tentative_style(self):
+        cases = (
+            (PreviewText("  Hello\n\n", "\t world  \n", 1.0), "Hello", " world"),
+            (
+                PreviewText("obsolete " * 100 + "confirmed", "\n newest words", 10.0),
+                None,
+                " newest words",
+            ),
+            (PreviewText("obsolete", " word" * 200 + " newest words", 10.0), "", None),
+            ("old " * 200 + "latest\n\nrefinement\t words", None, None),
+        )
+        for update, stable, tentative in cases:
+            with self.subTest(update=type(update).__name__, stable=stable):
+                overlay = _overlay()
+                updates = queue.SimpleQueue()
+                updates.put(update)
 
-        overlay.pump(updates)
+                overlay.pump(updates)
 
-        overlay.text.configure.assert_any_call(height=8)
-        overlay.text.see.assert_called_once_with("end")
-
-    def test_initial_layout_waits_for_a_real_width_before_counting_lines(self):
-        overlay = _overlay()
-        overlay.text.winfo_width.return_value = 1
-
-        overlay._resize()
-
-        overlay.text.count.assert_not_called()
-        overlay.text.configure.assert_called_once_with(height=1)
+                inserted = [call.args[1] for call in overlay.text.insert.call_args_list]
+                displayed = "".join(inserted)
+                original = update.text if isinstance(update, PreviewText) else update
+                normalized = " ".join(original.split())
+                self.assertLessEqual(len(displayed), 500)
+                self.assertTrue(normalized.endswith(displayed))
+                self.assertTrue(displayed.endswith(normalized[-20:]))
+                self.assertEqual(displayed, " ".join(displayed.split()))
+                if isinstance(update, PreviewText):
+                    if stable is not None:
+                        self.assertEqual(inserted[0], stable)
+                    if tentative is not None:
+                        self.assertEqual(inserted[1], tentative)
+                    self.assertEqual(overlay.text.insert.call_args.args[2], "tentative")
+                overlay.text.see.assert_called_once_with("end")
+                overlay.text.count.assert_not_called()
 
 
 if __name__ == "__main__":

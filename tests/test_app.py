@@ -176,6 +176,9 @@ class AppTests(unittest.TestCase):
     def test_settings_window_returns_control_to_recording(self) -> None:
         keyboard = Mock()
         tkinter = Mock()
+        tkinter.Tk.return_value.winfo_screenwidth.return_value = 1920
+        tkinter.Text.return_value.winfo_reqwidth.return_value = 720
+        tkinter.Text.return_value.winfo_reqheight.return_value = 100
         with (
             patch("voicecommander.app.Recorder") as recorder_type,
             patch("voicecommander.app.ThreadPoolExecutor"),
