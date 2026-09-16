@@ -62,9 +62,11 @@ flowchart TD
 ## Where your data goes
 
 Each recording becomes a temporary WAV file. With a local preview,
-preview, VoiceCommander confirms older segments that agree across consecutive
-passes. Every two seconds it decodes an eight-second window that begins two
-seconds before the last confirmed point. When that prefix lets a long recording
+VoiceCommander confirms older segments that agree across consecutive passes.
+It starts a preview decode once per second when the model keeps up, including
+decoding time in that interval. Slower decodes run one at a time without an extra
+wait. Each decode uses up to eight seconds of audio beginning two seconds before
+the last confirmed point. When that prefix lets a long recording
 skip at least 20 seconds, VoiceCommander reuses the warm preview server and
 transcribes the remaining audio with the same two-second overlap. It appends the
 tail only when at least three words match and the tail adds new words. Short
@@ -92,6 +94,11 @@ file to the audio-capable OpenRouter model ID entered in settings. Editing and
 Markdown send only the final transcript. All local models show tentative text
 while recording; `small` updates more slowly. You can disable Live local preview
 in settings.
+
+The preview stays in a fixed four-line window and follows the newest words.
+It keeps at most 500 characters on screen, dropping older words from the display.
+Line breaks and repeated whitespace appear as single spaces. These display changes
+do not shorten the final transcript or change its formatting.
 
 Every cloud request sets
 [`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),
