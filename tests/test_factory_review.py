@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import yaml
+
 SPEC = importlib.util.spec_from_file_location(
     "factory_review", Path(__file__).resolve().parents[1] / "scripts/factory_review.py"
 )
@@ -29,6 +31,19 @@ def defect(severity="high"):
         "consequence": "Private files disclosed",
         "verification": "Bob must not be able to list Alice's files",
     }
+
+
+class WorkflowTests(unittest.TestCase):
+    def test_privileged_audit_requires_explicit_repository_activation(self):
+        workflow = yaml.safe_load(
+            (audit.ROOT / ".github/workflows/factory-review.yml").read_text(encoding="utf-8")
+        )
+        job = workflow["jobs"]["audit"]
+        self.assertEqual(job.get("if"), "${{ vars.FACTORY_REVIEW_ENABLED == 'true' }}")
+        self.assertEqual(job["environment"], "factory-review")
+        self.assertFalse(job.get("continue-on-error", False))
+        for step in job["steps"]:
+            self.assertFalse(step.get("continue-on-error", False))
 
 
 class ReportTests(unittest.TestCase):

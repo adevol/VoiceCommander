@@ -19,6 +19,8 @@ concurrency:
 
 jobs:
   audit:
+    # Enable at repository level only after configuring the dedicated App and environment.
+    if: ${{ vars.FACTORY_REVIEW_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Configure this environment to allow only the protected default branch.

@@ -19,10 +19,15 @@ CI job still runs lint, formatting and application tests separately.
 
 ## Current state
 
-The workflow, runner, tests and repository skills are prepared locally. They are
-not an active merge restriction until the GitHub App, environment and required
-checks below are configured. The connection used during preparation had read-only
-access, so no GitHub protection or secrets were changed.
+The workflow, runner, tests and repository skills are in the repository. The
+audit job runs only when the repository variable `FACTORY_REVIEW_ENABLED` is
+`true`. Leave it unset until the GitHub App and environment are configured.
+Pushes and scheduled runs then skip the audit job without requesting credentials
+or publishing a `factory/review` result. The separate Windows CI still runs.
+
+Activation alone does not enforce a merge restriction. Configure and verify the
+required checks below before relying on the audit. No GitHub protection or
+secrets were changed during preparation.
 
 Preparation notes record seven P2 and two P3 findings from an independent Sol
 audit of a working-tree snapshot, despite the existing suite passing. That
@@ -53,11 +58,16 @@ audits the whole codebase, an existing defect can block an unrelated PR.
    `secrets`. Keep both keys out of repository-level secrets, source files and
    PR text. An account or daily spending limit is separate from the script's
    per-request estimate and token and price limits.
-5. Run the workflow on a disposable internal PR so the App publishes a
-   `factory/review` check. Inspect the independent report in the check details.
+5. Set the repository Actions variable `FACTORY_REVIEW_ENABLED` to `true`, then
+   run the workflow on a disposable internal PR so the App publishes a
+   `factory/review` check. Use a repository variable for this switch, since the
+   job condition is evaluated before environment variables are available.
+   Complete the validation trials below before requiring the check. Once
+   enabled, missing credentials and failed audits still fail the job.
 6. Inspect existing branch rules before changing them. Preserve other required
    checks and approvals. Require pull requests and require `factory/review` from
-   this specific App. Also require the existing CI job named `checks` from GitHub
+   this specific App, not the workflow's `audit` job, which can be skipped before
+   activation. Also require the existing CI job named `checks` from GitHub
    Actions once that job has run. Add the new requirement to existing protection;
    do not replace existing rules with a minimal example.
 7. Require branches to be up to date before merging. Enforce the requirements for
