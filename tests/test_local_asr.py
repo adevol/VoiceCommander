@@ -30,6 +30,22 @@ from voicecommander.settings import WHISPER_DEFINITIONS, Settings
 
 
 class LocalAsrTests(unittest.TestCase):
+    @patch("voicecommander.local_asr.subprocess.run")
+    def test_blank_audio_is_reported_instead_of_returned_as_dictation(self, run: Mock) -> None:
+        run.return_value = Mock(returncode=0, stderr="")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recording.wav"
+            path.touch()
+            transcript = Path(str(path) + ".whisper.txt")
+            engine = LocalAsrEngine(Path("cli.exe"), Path("server.exe"), Path("model.bin"))
+            for label in ("[BLANK_AUDIO]", "[BLANK_AUDIO]\n[BLANK_AUDIO]", "(music)"):
+                with self.subTest(label=label):
+                    transcript.write_text(label, encoding="utf-8")
+                    with self.assertRaisesRegex(RuntimeError, "No speech detected"):
+                        engine.transcribe(path)
+                    self.assertFalse(transcript.exists())
+                    self.assertTrue(path.exists())
+
     @unittest.skipUnless(
         os.environ.get("VOICECOMMANDER_INTEGRATION_AUDIO"),
         "set VOICECOMMANDER_INTEGRATION_AUDIO to run the real Whisper probe",

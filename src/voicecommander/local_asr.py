@@ -446,6 +446,11 @@ def _transcribe_whisper(
     text = text.strip()
     if not text:
         raise RuntimeError("Local ASR returned an empty transcript")
+    if not is_speech(text):
+        raise RuntimeError(
+            "No speech detected. Check that your microphone is unmuted "
+            "and select the correct microphone in settings."
+        )
     return text
 
 

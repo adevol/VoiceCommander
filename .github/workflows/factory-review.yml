@@ -1,0 +1,46 @@
+name: Independent code audit
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
+    branches: [master, main]
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17,47 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: factory-review
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Configure this environment to allow only the protected default branch.
+    # Keep the App private key and OpenRouter key HERE, not as repository secrets.
+    environment: factory-review
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Authenticate the independent check publisher
+        id: reviewer
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.FACTORY_REVIEW_APP_ID }}
+          private-key: ${{ secrets.FACTORY_REVIEW_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: read
+          permission-checks: write
+      - name: Audit candidate code as data
+        env:
+          FACTORY_GITHUB_TOKEN: ${{ steps.reviewer.outputs.token }}
+          FACTORY_REVIEW_APP_ID: ${{ vars.FACTORY_REVIEW_APP_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python3 -I scripts/factory_review.py

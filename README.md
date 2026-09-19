@@ -15,6 +15,12 @@ structured Markdown, an optional OpenRouter step works on the finished text.
 | `F7` | Markdown dictation |
 | `Ctrl+F8` | Open settings |
 
+These are the default hotkeys. If you change the normal dictation hotkey,
+use `Ctrl` plus that key to open settings while idle.
+
+By default, recording stops and transcription starts after five minutes.
+Change Recording limit in settings to allow between 1 and 3,600 seconds.
+
 New configurations detect the spoken language automatically. You can force a
 language in settings when detection needs a hint. Existing language choices are
 not reset.
@@ -134,6 +140,8 @@ German, French, and Spanish still need manual release checks.
 At editing strength 0, VoiceCommander pastes the raw transcript. Higher values
 send the text to the selected OpenRouter model. You can say commands such as
 "scratch that", "new paragraph", and "bullet point" instead of editing by hand.
+If cloud editing fails in normal dictation mode, VoiceCommander pastes the raw
+transcript.
 
 Whisper and cloud editing can use names and technical terms from Custom
 vocabulary. Separate terms with commas:
@@ -161,6 +169,33 @@ During development, run:
 uv run voicecommander --captions
 ```
 
+## Troubleshooting and local files
+
+Choose a microphone in settings, or leave Microphone empty to use the system
+default. VoiceCommander matches a saved selection by name if Windows changes
+device numbers after a reconnect. If that microphone is unavailable, reconnect
+it or select another one in settings.
+
+If you see "No speech detected", check that the microphone is unmuted and that
+settings has the correct input device. This error appears when the full-file
+local transcription returns only a non-speech label, such as `[BLANK_AUDIO]`.
+
+On a standard Windows setup, these files are stored here. Paste a folder path
+into File Explorer to open it.
+
+| Files | Location |
+| --- | --- |
+| Settings | `%APPDATA%\VoiceCommander\config.toml` |
+| Downloaded models and runtime | `%APPDATA%\VoiceCommander\whisper.cpp\` |
+| Log | `%LOCALAPPDATA%\VoiceCommander\voicecommander.log` |
+| Recordings | `%TEMP%\VoiceCommander\recording-*.wav` |
+
+If transcription or delivery fails after the WAV is saved, the error message
+shows its location. Copy that file somewhere permanent if you need to keep it,
+then open it in an audio player to check the recording. The app preserves it
+for recovery but has no command to retry a saved recording. After a successful
+paste attempt, it tries to delete the WAV. The transcript remains on the clipboard.
+
 ## Develop and build
 
 VoiceCommander requires Python 3.13 and uses `uv`.
@@ -187,12 +222,16 @@ To check without changing files, use `uv run ruff check .` and
 GitHub Actions runs these Ruff checks and the tests on Windows for pull requests
 and pushes to `master`, using `.python-version` and the locked dependencies.
 
+The separate [independent audit gate](docs/audit-gate.md) is experimental.
+Its setup notes cover activation, required checks and validation before use.
+
 Each dictation has a recording session that owns capture, its timer, preview
 state, and final transcription. Stopping capture prevents further preview
 updates. Finalization drains the preview worker, cancelling a slow request
 after a short grace period, before reusing confirmed text or decoding the full
 file. The text pipeline handles refinement and its fallback rules. The app
-pastes the completed result and deletes the WAV only after successful delivery.
+pastes the completed result and tries to delete the WAV after sending the paste
+command. It cannot confirm that the target application accepted the text.
 
 Shutdown stops capture and preview, prevents further pastes, and waits for
 in-flight model downloads or finalization requests before closing the model.
