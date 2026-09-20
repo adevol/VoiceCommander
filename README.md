@@ -1,246 +1,105 @@
 # VoiceCommander
 
 Press a key, talk, then press it again. VoiceCommander types the result wherever
-your cursor is.
+your cursor is. It is a Windows dictation tool with local multilingual Whisper
+transcription and optional OpenRouter transcription and text editing.
 
-It is a local-first Windows dictation tool with multilingual Whisper models.
-Your computer handles transcription by default. If you want cleaner prose or
-structured Markdown, an optional OpenRouter step works on the finished text.
+The project is preparing for an incremental rebuild. The
+[rebuild work order](docs/plans/rebuild/plan.md) records its scope. The current
+implementation remains usable while the replacement's requirements are decided.
+Its architecture is not a constraint on the rebuild.
 
 ## Use it
 
 | Hotkey | Action |
 | --- | --- |
-| `F8` | Normal dictation |
-| `F7` | Markdown dictation |
-| `Ctrl+F8` | Open settings |
+| `F8` | Start or stop normal dictation |
+| `F7` | Start or stop Markdown dictation |
+| `Ctrl+F8` | Open settings while idle |
 
-These are the default hotkeys. If you change the normal dictation hotkey,
-use `Ctrl` plus that key to open settings while idle.
+If you change the normal dictation hotkey, use `Ctrl` plus that key for settings.
+Installed builds start when you sign in.
 
-By default, recording stops and transcription starts after five minutes.
-Change Recording limit in settings to allow between 1 and 3,600 seconds.
+Recording stops automatically after five minutes by default. Settings allow
+limits from 1 to 3,600 seconds, microphone selection, automatic or fixed language
+detection, and custom vocabulary as comma-separated terms.
 
-New configurations detect the spoken language automatically. You can force a
-language in settings when detection needs a hint. Existing language choices are
-not reset.
-
-Installed builds start quietly when you sign in, so the hotkeys are ready
-without opening the application.
-
-## How it works
-
-VoiceCommander has separate dictation and live-caption launch modes:
-
-```mermaid
-flowchart TD
-    A{Launch mode} -->|VoiceCommander| B[Load settings and register hotkeys]
-    A -->|Captions shortcut| N[Capture speaker loopback]
-
-    B --> C{User action}
-    C -->|F8 or F7| D[Record microphone]
-    C -->|Ctrl+F8| E[Edit settings]
-    E --> B
-
-    D --> F[Optional local preview]
-    F --> S[Confirmed prefix plus open tail]
-    D -->|Press hotkey again| G[Create temporary WAV]
-    G --> H{Transcription provider}
-    H -->|Local default| I[Reuse warm server for long confirmed prefix]
-    H -.->|OpenRouter| J[Cloud audio model]
-    S --> I
-    I -->|Overlap matches| K[Final transcript]
-    I -->|Short recording or no safe match| T[Full-file Whisper fallback]
-    T --> K
-    J --> K
-    K --> L{Cleanup or Markdown?}
-    L -->|No| M[Paste once at cursor]
-    L -.->|Yes| O[OpenRouter text model]
-    O --> M
-    M --> C
-
-    N --> P[Four-second rolling window]
-    P --> Q[Warm local ASR]
-    Q --> R[Update caption window]
-    R --> N
-```
-
-## Where your data goes
-
-Each recording becomes a temporary WAV file. With a local preview,
-VoiceCommander confirms older segments that agree across consecutive passes.
-It starts a preview decode once per second when the model keeps up, including
-decoding time in that interval. Slower decodes run one at a time without an extra
-wait. Each decode uses up to eight seconds of audio beginning two seconds before
-the last confirmed point. When that prefix lets a long recording
-skip at least 20 seconds, VoiceCommander reuses the warm preview server and
-transcribes the remaining audio with the same two-second overlap. It appends the
-tail only when at least three words match and the tail adds new words. Short
-recordings, cold servers, and unsafe joins use the existing full-file Whisper
-transcription. Tentative preview text is never committed.
-
-```mermaid
-flowchart LR
-    A[Microphone] --> B[Temporary WAV]
-    A -->|local preview| P[Confirmed prefix plus open tail]
-    B -->|Long local recording| C[Warm overlapped-tail finalization]
-    P --> C
-    C -. Short or unsafe join .-> H[Full-file Whisper fallback]
-    B -. Cloud transcription .-> D[OpenRouter audio model]
-    C --> E[Final transcript]
-    H --> E
-    D --> E
-    E --> F[Paste once]
-    E -. Optional cleanup as text .-> G[OpenRouter text model]
-    G --> F
-```
-
-The solid route is local and is the default. Cloud transcription sends the WAV
-file to the audio-capable OpenRouter model ID entered in settings. Editing and
-Markdown send only the final transcript. All local models show tentative text
-while recording; `small` updates more slowly. You can disable Live local preview
-in settings.
-
-The preview stays in a fixed four-line window and follows the newest words.
-It keeps at most 500 characters on screen, dropping older words from the display.
-Line breaks and repeated whitespace appear as single spaces. These display changes
-do not shorten the final transcript or change its formatting.
-
-Every cloud request sets
-[`data_collection` to `deny`](https://openrouter.ai/docs/guides/routing/provider-selection),
-which restricts routing to providers OpenRouter identifies as non-collecting.
-OpenRouter still processes the request and records request metadata under its
-own policy.
-
-VoiceCommander stores your API key in Windows Credential Manager, not in its
-configuration file. During development, `OPENROUTER_API_KEY` takes precedence.
-
-## Pick a local model
-
-Models download only when selected. Model files and the native whisper.cpp
-runtime are pinned and verified.
-
-| Model | Download | Final | Warm preview | Trade-off |
-| --- | ---: | ---: | ---: | --- |
-| `tiny` | 31 MiB | 0.56 s | 0.50 s | Fastest live text; lower accuracy |
-| `base` | 57 MiB | 0.94 s | 1.00 s | Default; balanced speed and accuracy |
-| `small` | 181 MiB | 2.72 s | 3.63 s | Better recognition; slower live text |
-
-Latency is the median of five English runs on the
-[bundled 11-second JFK sample](benchmarks/jfk.wav), using whisper.cpp v1.9.1
-capped at 8 threads on a Ryzen laptop in Balanced power mode. Final timings
-include CLI startup. Preview timings decode the production 8-second window on
-the persistent local server after its first request. Lower is better.
-
-These short English timings settle the latency gate only. Long recordings and
-German, French, and Spanish still need manual release checks.
-
-## Optional cloud post-processing
-
-At editing strength 0, VoiceCommander pastes the raw transcript. Higher values
-send the text to the selected OpenRouter model. You can say commands such as
-"scratch that", "new paragraph", and "bullet point" instead of editing by hand.
-If cloud editing fails in normal dictation mode, VoiceCommander pastes the raw
+Local models download when selected. `base` is the default, `tiny` favors speed,
+and `small` favors accuracy. Downloads of models and the native runtime are pinned
+and verified. Live local preview shows tentative text in a four-line window;
+disable it in settings if unwanted. Preview truncation does not shorten the final
 transcript.
 
-Whisper and cloud editing can use names and technical terms from Custom
-vocabulary. Separate terms with commas:
+At editing strength 0, normal dictation pastes the raw transcript. Higher values
+send the final text to OpenRouter for editing. If editing fails, normal dictation
+falls back to the raw transcript.
 
-```text
-Kubernetes, Postgres, Aleksandr
-```
+Markdown mode always requires an OpenRouter API key. Dictate headings, lists,
+tables, code blocks, and formulas. Inline formulas use `$...$`; display formulas
+use `$$...$$`. If formatting fails, the app reports an error without pasting the
+spoken instructions.
 
-Use `F7` to dictate headings, lists, tables, code blocks, and formulas as raw
-Markdown. Inline formulas use `$...$`; display formulas use `$$...$$`.
-Markdown mode always requires an OpenRouter API key. If formatting fails,
-VoiceCommander reports the error instead of pasting your spoken instructions.
+The separate **VoiceCommander Captions** Start menu shortcut captions audio
+playing on your computer in an always-on-top window. Captions stay local, have
+their own model setting, and follow the dictation language setting.
 
-## Live captions
+## Privacy and recovery
 
-The `VoiceCommander Captions` Start menu shortcut captions audio playing on
-your computer in an always-on-top window. Audio stays local. Captions currently
-use a separate model setting, which defaults to `base`. A warm local ASR process
-transcribes a four-second rolling window once per second. Language follows the
-dictation setting, including automatic detection.
+Transcription is local by default. Selecting cloud transcription sends the
+recording to the OpenRouter audio model configured in settings. Optional editing
+and Markdown formatting send the final transcript. Cloud requests set
+`data_collection` to `deny` to restrict provider routing; OpenRouter still
+processes requests and records metadata under its own policy.
 
-During development, run:
-
-```powershell
-uv run voicecommander --captions
-```
-
-## Troubleshooting and local files
-
-Choose a microphone in settings, or leave Microphone empty to use the system
-default. VoiceCommander matches a saved selection by name if Windows changes
-device numbers after a reconnect. If that microphone is unavailable, reconnect
-it or select another one in settings.
-
-If you see "No speech detected", check that the microphone is unmuted and that
-settings has the correct input device. This error appears when the full-file
-local transcription returns only a non-speech label, such as `[BLANK_AUDIO]`.
-
-On a standard Windows setup, these files are stored here. Paste a folder path
-into File Explorer to open it.
+API keys are stored in Windows Credential Manager. During development,
+`OPENROUTER_API_KEY` takes precedence.
 
 | Files | Location |
 | --- | --- |
 | Settings | `%APPDATA%\VoiceCommander\config.toml` |
-| Downloaded models and runtime | `%APPDATA%\VoiceCommander\whisper.cpp\` |
+| Models and runtime | `%APPDATA%\VoiceCommander\whisper.cpp\` |
 | Log | `%LOCALAPPDATA%\VoiceCommander\voicecommander.log` |
 | Recordings | `%TEMP%\VoiceCommander\recording-*.wav` |
 
-If transcription or delivery fails after the WAV is saved, the error message
-shows its location. Copy that file somewhere permanent if you need to keep it,
-then open it in an audio player to check the recording. The app preserves it
-for recovery but has no command to retry a saved recording. After a successful
-paste attempt, it tries to delete the WAV. The transcript remains on the clipboard.
+If transcription or delivery fails after saving the recording, the error shows
+the WAV location. Copy it somewhere permanent for recovery; the app has no saved
+recording retry command. After sending a paste command, the app attempts to
+delete the WAV. It cannot confirm that the target application accepted the text.
+The transcript remains on the clipboard.
+
+For "No speech detected", check microphone mute and the selected input device.
+A saved microphone is matched by name if Windows changes its device number.
+If it is unavailable, reconnect it or select another microphone.
 
 ## Develop and build
 
-VoiceCommander requires Python 3.13 and uses `uv`.
+Python 3.13 and `uv` are required.
 
 ```powershell
-uv sync
+uv sync --locked --dev
 uv run voicecommander --settings
 uv run voicecommander
+uv run voicecommander --captions
+```
+
+Run the same checks as Windows CI:
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
 uv run python -m unittest discover -s tests
-uv run python scripts/benchmark_asr.py recording.wav --model base
 ```
 
-Ruff handles Python linting, import sorting, and formatting with a 100-character
-line length. Install it with `uv sync`, then run:
+To measure local transcription on a 16 kHz mono, 16-bit PCM WAV:
 
 ```powershell
-uv run ruff check --fix .
-uv run ruff format .
+uv run python scripts/benchmark_asr.py benchmarks/jfk.wav --model base
 ```
 
-To check without changing files, use `uv run ruff check .` and
-`uv run ruff format --check .`. The build runs both checks before the tests.
+The bundled [JFK sample](benchmarks/jfk.wav) comes from
+[whisper.cpp v1.9.1](https://github.com/ggml-org/whisper.cpp/blob/v1.9.1/samples/jfk.wav).
+Short English benchmarks do not establish accuracy or performance for long
+recordings or other languages. Those require separate runtime checks.
 
-GitHub Actions runs these Ruff checks and the tests on Windows for pull requests
-and pushes to `master`, using `.python-version` and the locked dependencies.
-
-The separate [independent audit gate](docs/audit-gate.md) is experimental.
-Its setup notes cover activation, required checks and validation before use.
-
-Each dictation has a recording session that owns capture, its timer, preview
-state, and final transcription. Stopping capture prevents further preview
-updates. Finalization drains the preview worker, cancelling a slow request
-after a short grace period, before reusing confirmed text or decoding the full
-file. The text pipeline handles refinement and its fallback rules. The app
-pastes the completed result and tries to delete the WAV after sending the paste
-command. It cannot confirm that the target application accepted the text.
-
-Shutdown stops capture and preview, prevents further pastes, and waits for
-in-flight model downloads or finalization requests before closing the model.
-Those requests can delay process exit until they complete or time out.
-
-Install Inno Setup, then build the installer:
-
-```powershell
-.\scripts\build.ps1
-```
-
-The installer is written to `dist/installer/`.
+Install Inno Setup 6, then run `.\scripts\build.ps1`. The build checks lint,
+formatting, and tests before creating the installer in `dist/installer/`.
