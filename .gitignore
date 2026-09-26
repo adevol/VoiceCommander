@@ -1,16 +1,5 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-.ruff_cache/
-.uv-cache/
+# Local rebuild experiments, including downloaded models and environments.
+/build/
 
-# Virtual environments
-.venv
-
-# Local secrets and generated analysis
+# Local credentials must never be committed.
 .env
-graphify-out/

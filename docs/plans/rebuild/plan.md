@@ -1,42 +1,71 @@
-# Rebuild work order
+# Rebuild plan
 
-## Outcome and scope
+## Scope and authority
 
-Rebuild VoiceCommander incrementally from user requirements, without treating
-the current architecture as a design constraint. Start by removing unnecessary
-documentation and files. Keep the existing app usable during this first step.
+Rebuild VoiceCommander from user requirements without inheriting the old
+architecture. On 2026-09-26 the user explicitly chose to remove the old
+implementation and all inherited supporting files. This supersedes the earlier
+plan to keep the old app usable during the rebuild. Git history at `5b9e169`
+preserves the previous application.
 
-The user authorized local cleanup on 2026-09-21 and explicitly chose to retire
-the experimental OpenRouter review system. Choose a replacement review setup
-later. No paid reviews, publishing, remote configuration changes, or releases
-are authorized by this work order.
+Keep the new rebuild records and the local R2T2 experiment. Remove old application
+source, tests, CI, packaging, scripts, dependency definitions, benchmark files,
+local configuration, the old environment, and the unused legacy checkout.
+Replace the README and ignore rules with files describing the current state.
+Do not add application scaffolding until it serves a working step.
 
-## Working slices
+This authorizes local cleanup. It does not authorize paid reviews, publishing,
+remote configuration changes, releases, or changes to app data outside this repo.
+The OpenRouter review experiment was retired by user decision. Select the rebuild's
+review setup later. Any future review/repair loop is limited to two repair passes
+unless the user sets another limit. Ask only one question at a time.
 
-1. Clean the repository. Remove the experimental reviewer and its associated
-   tests, workflow, policy, skills, and setup notes. Remove generated analysis,
-   build output, and caches. Consolidate useful user and development information
-   in the README. Preserve application code, application tests, dependency locks,
-   build inputs, benchmark audio and attribution, local secrets, the environment,
-   and other worktrees.
-2. Establish the replacement's intended behavior with the user. Decide which
-   current capabilities belong in the first usable version, its privacy and
-   failure guarantees, and observable acceptance examples. The README describes
-   the existing app; it is not an approved replacement specification.
-3. Propose the smallest design that meets those requirements and build one
-   end-to-end slice around the largest uncertainty. Select that experiment and
-   its success criteria after slice 2. Expand only after observing its behavior
-   and reviewing whether its structure is necessary.
+## Requirements
+
+- Run directly on Windows without WSL or Docker.
+- Work on laptops without a dedicated GPU. GPU acceleration may be optional.
+- Support English and Mandarin Chinese at minimum. Expose the selected engine's
+  full supported language set without an artificial allowlist. Distinguish
+  upstream language claims from accuracy measured here.
+
+Architecture, implementation language, and transcription engine remain open.
+The experiment uses CPU execution to check feasibility; it does not prohibit
+later use of integrated graphics.
+
+## Next working step
+
+Keep the next step small: a saved recording produces streaming console text.
+The R2T2 native Windows CPU experiment does this today. See
+[results and limitations](status.md#native-cpu-experiment-results).
+No application classes or provider framework are needed for this step.
+
+Before selecting an engine, measure first text, completion delay, peak memory,
+and transcript errors on representative English and Mandarin recordings. Include
+mixed languages, custom vocabulary, quiet speech, pauses, silence, long recordings,
+and final words at stop. Verify whether committed text changes or loses words.
+The old Whisper measurements are historical comparison data; its implementation
+is no longer part of this checkout.
+
+Add microphone input, then a hotkey and paste after the experiment is satisfactory.
+For those steps, cancellation and runtime failures must preserve recoverable audio
+and report failure without pasting incomplete text as a successful result.
+
+## R2T2 evaluation candidate
+
+[R2T2](https://github.com/netease-youdao/Confucius4-R2T2) is a candidate, not a
+selected backend. Its [native runtime documentation](https://github.com/netease-youdao/Confucius4-R2T2/blob/master/r2t2_llama/README.md)
+describes the build path used by the local experiment. A Windows CPU build works
+with one portability fix. The source pins, measurements, and limitations are in
+the status record. Code and weights have
+[separate licenses](https://github.com/netease-youdao/Confucius4-R2T2#license).
 
 ## Cleanup acceptance
 
-- Existing application source and tests, CI, packaging inputs, and lockfile do
-  not change. Existing lint, formatting, and application tests pass.
-- No remaining code or documentation requires the removed reviewer or docs.
-- Secrets, the working environment, and the separate Kilo worktree survive.
-- Generated analysis and build output no longer clutter the checkout.
-
-Architecture, implementation language, transcription engine, migration strategy,
-and independent reviewer are open decisions. Do not add speculative replacement
-modules now. Future review/repair loops have at most two repair passes unless
-the user sets another limit; paid services need separate authority.
+- The tracked tree contains only the new README, ignore rules, and rebuild records.
+- No inherited app, tests, dependencies, packaging, CI, or local settings remain
+  in the main checkout. The unused nested checkout is removed through Git after
+  verifying it has no uncommitted or ignored files.
+- Git history and the R2T2 experiment remain intact. Run a short transcription
+  after cleanup to verify the experiment does not need the old app environment.
+- Check documentation links and the diff. Historical app test results are not
+  validation of the rebuild. Independent review remains unconfigured.
